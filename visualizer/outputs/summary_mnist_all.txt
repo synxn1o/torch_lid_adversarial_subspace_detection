@@ -1,0 +1,12 @@
+Adversarial ML Visualization Summary
+==================================================
+
+Dataset: mnist
+Mode: all
+Generated: 3 visualizations
+
+✓ SUCCESS: training_curves
+✓ SUCCESS: confusion_matrix
+✓ SUCCESS: roc_analysis
+
+Output Directory: /mnt/e/lid_adversarial_subspace_detection/visualizer/outputs

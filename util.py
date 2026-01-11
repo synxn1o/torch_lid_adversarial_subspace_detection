@@ -350,3 +350,97 @@ def lid_adv_term(clean_logits, adv_logits, batch_size=100):
     lids = F.normalize(lids.view(-1, 1), p=2, dim=0).squeeze()
     
     return lids
+
+def kmean_batch(data, batch, k):
+    """
+    Mean distance of batch points to their k nearest neighbors in data.
+    Numpy/Scipy implementation.
+    """
+    data = np.asarray(data, dtype=np.float32)
+    batch = np.asarray(batch, dtype=np.float32)
+
+    k = min(k, len(data)-1)
+    f = lambda v: np.mean(v)
+    
+    a = cdist(batch, data)
+    a = np.apply_along_axis(np.sort, axis=1, arr=a)[:, 1:k+1]
+    a = np.apply_along_axis(f, axis=1, arr=a)
+    return a
+
+def kmean_pca_batch(data, batch, k=10):
+    """
+    Mean distance to k nearest neighbors after applying PCA to 2D.
+    """
+    from sklearn.decomposition import PCA
+    
+    data = np.asarray(data, dtype=np.float32)
+    batch = np.asarray(batch, dtype=np.float32)
+    a = np.zeros(batch.shape[0])
+    
+    for i in np.arange(batch.shape[0]):
+        tmp = np.concatenate((data, [batch[i]]))
+        tmp_pca = PCA(n_components=2).fit_transform(tmp)
+        a[i] = kmean_batch(tmp_pca[:-1], tmp_pca[-1], k=k)
+    return a
+
+def get_kmeans_random_batch(model, X, X_noisy, X_adv, dataset, k=20, batch_size=100, device='cpu', pca=False):
+    """
+    Extract KMeans characteristics (mean distance to k nearest neighbors)
+    """
+    extractor = FeatureExtractor(model)
+    model.eval()
+    
+    # Helper to get features for a batch
+    def get_batch_features(batch_x):
+        batch_x = torch.from_numpy(batch_x).to(device)
+        feats = extractor(batch_x)
+        return [f.detach().cpu().numpy() for f in feats]
+
+    n_batches = int(np.ceil(X.shape[0] / batch_size))
+    
+    kms = []
+    kms_noisy = []
+    kms_adv = []
+    
+    for i in tqdm(range(n_batches), desc="KMeans Extraction"):
+        start = i * batch_size
+        end = min((i + 1) * batch_size, X.shape[0])
+        
+        batch_X = X[start:end]
+        batch_noisy = X_noisy[start:end]
+        batch_adv = X_adv[start:end]
+        
+        clean_feats = get_batch_features(batch_X)
+        noisy_feats = get_batch_features(batch_noisy)
+        adv_feats = get_batch_features(batch_adv)
+        
+        km_dim = len(clean_feats)
+        
+        b_kms = np.zeros((len(batch_X), km_dim))
+        b_kms_noisy = np.zeros((len(batch_X), km_dim))
+        b_kms_adv = np.zeros((len(batch_X), km_dim))
+        
+        for l in range(km_dim):
+            f_clean = clean_feats[l].reshape(len(batch_X), -1)
+            f_noisy = noisy_feats[l].reshape(len(batch_X), -1)
+            f_adv = adv_feats[l].reshape(len(batch_X), -1)
+            
+            if pca:
+                b_kms[:, l] = kmean_pca_batch(f_clean, f_clean, k=k)
+                b_kms_noisy[:, l] = kmean_pca_batch(f_clean, f_noisy, k=k)
+                b_kms_adv[:, l] = kmean_pca_batch(f_clean, f_adv, k=k)
+            else:
+                b_kms[:, l] = kmean_batch(f_clean, f_clean, k=k)
+                b_kms_noisy[:, l] = kmean_batch(f_clean, f_noisy, k=k)
+                b_kms_adv[:, l] = kmean_batch(f_clean, f_adv, k=k)
+            
+        kms.append(b_kms)
+        kms_noisy.append(b_kms_noisy)
+        kms_adv.append(b_kms_adv)
+        
+    kms = np.concatenate(kms, axis=0)
+    kms_noisy = np.concatenate(kms_noisy, axis=0)
+    kms_adv = np.concatenate(kms_adv, axis=0)
+    
+    extractor.close()
+    return kms, kms_noisy, kms_adv

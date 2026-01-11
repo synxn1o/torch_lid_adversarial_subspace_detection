@@ -5,7 +5,7 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 from sklearn.neighbors import KernelDensity
-from util import get_data, get_model, FeatureExtractor, mle_batch, CLIP_MIN, CLIP_MAX
+from util import get_data, get_model, FeatureExtractor, mle_batch, get_kmeans_random_batch, CLIP_MIN, CLIP_MAX
 import scipy.io as sio
 
 PATH_DATA = "data/"
@@ -146,7 +146,7 @@ def get_lids_random_batch(model, X, X_noisy, X_adv, dataset, k=20, batch_size=10
         # lid_batch[:, i] = mle_batch(X_act, X_act, k=k)
         # lid_batch_adv[:, i] = mle_batch(X_act, X_adv_act, k=k) ??
         # Wait, the original code:
-        # lid_batch_adv[:, i] = mle_batch(X_act, X_adv_act, k=k) 
+        # lid_batch_adv[:, i] = mle_batch(X_act, X_adv_act, k=k)
         # It computes LID of Adv samples relative to Clean samples in the batch?
         # Yes: `mle_batch(data, batch)` -> data is reference, batch is query.
         # So reference is always X_act (clean).
@@ -187,11 +187,25 @@ def get_lids_random_batch(model, X, X_noisy, X_adv, dataset, k=20, batch_size=10
     extractor.close()
     return lids, lids_noisy, lids_adv
 
+def get_kms(model, X, X_noisy, X_adv, dataset, k=20, batch_size=100, device='cpu', pca=True):
+    """
+    Extract KMeans characteristics (mean distance to k nearest neighbors)
+    """
+    print('Extract k means feature: k = %s' % k)
+    kms_normal, kms_noisy, kms_adv = get_kmeans_random_batch(model, X, X_noisy,
+                                                              X_adv, dataset, k, batch_size,
+                                                              device, pca=pca)
+    print("kms_normal:", kms_normal.shape)
+    print("kms_noisy:", kms_noisy.shape)
+    print("kms_adv:", kms_adv.shape)
+
+    return kms_normal, kms_noisy, kms_adv
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dataset', required=True, type=str)
     parser.add_argument('-a', '--attack', required=True, type=str)
-    parser.add_argument('-r', '--characteristic', required=True, type=str, choices=['kd', 'bu', 'lid', 'all'])
+    parser.add_argument('-r', '--characteristic', required=True, type=str, choices=['kd', 'bu', 'lid', 'km', 'all'])
     parser.add_argument('-k', '--k_nearest', default=20, type=int)
     parser.add_argument('-b', '--batch_size', default=100, type=int)
     args = parser.parse_args()
@@ -275,6 +289,7 @@ def main():
         y = np.concatenate((np.ones(len(X_pos)), np.zeros(len(X_neg))))
         
         data = np.concatenate((X, y.reshape(-1, 1)), axis=1)
+
         save_name = os.path.join(PATH_DATA, f"{name}_{args.dataset}_{args.attack}.npy")
         np.save(save_name, data)
         print(f"Saved to {save_name}")
@@ -354,6 +369,17 @@ def main():
         bu_adv = get_bu_values(X_adv)
         
         merge_and_save(bu_adv, np.concatenate((bu_normal, bu_noisy), axis=0), 'bu')
+
+    if args.characteristic in ['km', 'all']:
+        print("Extracting KMeans characteristics...")
+        kms_normal, kms_noisy, kms_adv = get_kms(model, X_test, X_noisy, X_adv,
+                                                 args.dataset, k=args.k_nearest,
+                                                 batch_size=args.batch_size, device=device)
+        
+        # Merge: Pos=Adv, Neg=Normal+Noisy
+        kms_pos = kms_adv
+        kms_neg = np.concatenate((kms_normal, kms_noisy), axis=0)
+        merge_and_save(kms_pos, kms_neg, 'km')
 
 if __name__ == "__main__":
     main()

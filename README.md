@@ -6,7 +6,7 @@ This project is a **PyTorch implementation** of the methods described in the ICL
 The codebase allows for:
 1.  **Training** Deep Neural Networks on MNIST, CIFAR-10, and SVHN.
 2.  **Crafting** adversarial examples using attacks like FGSM, BIM, JSMA, and C&W.
-3.  **Extracting** characteristics (LID, Kernel Density, Bayesian Uncertainty) from model layers.
+3.  **Extracting** characteristics (LID, Kernel Density, Bayesian Uncertainty, KMeans) from model layers.
 4.  **Detecting** adversarial examples using a logistic regression classifier based on these characteristics.
 
 ## Directory Structure
@@ -47,7 +47,7 @@ python extract_characteristics.py -d <dataset> -a <attack> -r <characteristics> 
 # Example:
 python extract_characteristics.py -d mnist -a fgsm -r lid -k 20 -b 100
 ```
-*   **Characteristics**: `lid`, `kd`, `bu`.
+*   **Characteristics**: `lid`, `kd`, `bu`, `km`.
 
 ### 4. Train & Evaluate Detector
 Train a Logistic Regression detector on the extracted features.

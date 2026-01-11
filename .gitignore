@@ -1,3 +1,8 @@
 GEMINI.md
 data/
 .gemini/
+__pycache__/
+models/
+
+.pkl
+.npy
