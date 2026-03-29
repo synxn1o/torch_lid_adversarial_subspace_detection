@@ -3,6 +3,7 @@ Visualizer classes for different types of adversarial ML analysis
 """
 
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import seaborn as sns
 import numpy as np
 import torch
@@ -20,8 +21,8 @@ from plotly.subplots import make_subplots
 from visualizer.config import (
     get_output_path, 
     PLOT_STYLES, 
-    MNIST_CONFIG,
-    VISUALIZATION_CONFIG
+    VISUALIZATION_CONFIG,
+    get_dataset_config
 )
 from visualizer.data_loaders import (
     load_original_data,
@@ -37,12 +38,12 @@ class BaseVisualizer:
     """Base class for all visualizers"""
     
     def __init__(self, dataset: str = "mnist", style: str = "presentation", 
-                 output_dir: str = None, dpi: int = 300):
+                 output_dir: Optional[str] = None, dpi: int = 300):
         self.dataset = dataset
         self.style = style
         self.dpi = dpi
         self.output_dir = output_dir or get_output_path("general", "", create_dir=True)
-        self.config = MNIST_CONFIG if dataset == "mnist" else {}
+        self.config = get_dataset_config(dataset)
         
         # Setup plot style
         self._setup_style()
@@ -65,7 +66,7 @@ class BaseVisualizer:
         
         sns.set_palette("colorblind")
     
-    def save_figure(self, fig, filename: str, subdir: str = None):
+    def save_figure(self, fig, filename: str, subdir: Optional[str] = None):
         """Save figure to output directory"""
         if subdir:
             output_path = get_output_path(subdir, filename, create_dir=True)
@@ -84,7 +85,7 @@ class AdversarialVisualizer(BaseVisualizer):
         super().__init__(**kwargs)
     
     def create_image_grid_comparison(self, attack: str, num_samples: int = 16, 
-                                   save: bool = True) -> Optional[plt.Figure]:
+                                   save: bool = True) -> Optional[Figure]:
         """
         Create grid comparison: Original vs Adversarial vs Perturbation vs Difference
         """
@@ -106,12 +107,16 @@ class AdversarialVisualizer(BaseVisualizer):
             
             adversarial_data = adversarial_data[:num_samples]
             
+            # Special handling for toy dataset (2D points)
+            if self.dataset == 'toy':
+                return self._create_toy_scatter_comparison(attack, original_data, adversarial_data, original_labels, save)
+
             # Calculate perturbations
             perturbations = np.abs(adversarial_data - original_data)
             differences = adversarial_data - original_data
             
             # Create grid
-            rows = min(4, num_samples)
+            rows = min(4, int(np.ceil(num_samples / 4)))
             cols = 4
             fig, axes = plt.subplots(rows, cols, figsize=(16, 4*rows))
             
@@ -149,7 +154,7 @@ class AdversarialVisualizer(BaseVisualizer):
                 ax.axis('off')
                 plt.colorbar(im, ax=ax, shrink=0.6)
             
-            plt.suptitle(f'MNIST: Original vs {attack.upper()} Adversarial Examples', 
+            plt.suptitle(f'{self.dataset.upper()}: Original vs {attack.upper()} Adversarial Examples', 
                         fontsize=16, y=1.02)
             plt.tight_layout()
             
@@ -160,10 +165,40 @@ class AdversarialVisualizer(BaseVisualizer):
             
         except Exception as e:
             print(f"Error creating image grid: {e}")
+            import traceback
+            traceback.print_exc()
             return None
+
+    def _create_toy_scatter_comparison(self, attack, original, adversarial, labels, save):
+        """Create scatter plot comparison for 2D toy data"""
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Original
+        axes[0].scatter(original[:, 0], original[:, 1], c=labels, cmap='coolwarm', alpha=0.6)
+        axes[0].set_title('Original Data')
+        axes[0].grid(True, alpha=0.3)
+        
+        # Adversarial
+        axes[1].scatter(adversarial[:, 0], adversarial[:, 1], c=labels, cmap='coolwarm', alpha=0.6)
+        # Draw arrows from original to adversarial
+        for i in range(min(50, len(original))):
+            axes[1].arrow(original[i, 0], original[i, 1], 
+                         adversarial[i, 0] - original[i, 0], 
+                         adversarial[i, 1] - original[i, 1],
+                         head_width=0.05, head_length=0.1, fc='k', ec='k', alpha=0.3)
+        
+        axes[1].set_title(f'Adversarial Data ({attack})')
+        axes[1].grid(True, alpha=0.3)
+        
+        plt.suptitle(f'Toy Dataset: {attack.upper()} Attack Visualization', fontsize=16)
+        plt.tight_layout()
+        
+        if save:
+            self.save_figure(fig, f"adversarial_scatter_{attack}.png", "adversarial")
+        return fig
     
-    def create_perturbation_analysis(self, attacks: List[str] = None, 
-                                   save: bool = True) -> Optional[plt.Figure]:
+    def create_perturbation_analysis(self, attacks: Optional[List[str]] = None, 
+                                   save: bool = True) -> Optional[Figure]:
         """
         Analyze perturbation magnitudes across attacks
         """
@@ -214,8 +249,8 @@ class AdversarialVisualizer(BaseVisualizer):
             print(f"Error creating perturbation analysis: {e}")
             return None
     
-    def create_attack_success_metrics(self, attacks: List[str] = None, 
-                                    save: bool = True) -> Optional[plt.Figure]:
+    def create_attack_success_metrics(self, attacks: Optional[List[str]] = None, 
+                                    save: bool = True) -> Optional[Figure]:
         """
         Analyze attack success rates and metrics
         """
@@ -309,7 +344,7 @@ class ModelVisualizer(BaseVisualizer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def create_training_curves(self, save: bool = True) -> Optional[plt.Figure]:
+    def create_training_curves(self, save: bool = True) -> Optional[Figure]:
         """
         Create training/validation loss and accuracy curves
         """
@@ -358,7 +393,7 @@ class ModelVisualizer(BaseVisualizer):
             print(f"Error creating training curves: {e}")
             return None
     
-    def create_confusion_matrix(self, save: bool = True) -> Optional[plt.Figure]:
+    def create_confusion_matrix(self, save: bool = True) -> Optional[Figure]:
         """
         Create confusion matrix visualization
         """
@@ -372,8 +407,9 @@ class ModelVisualizer(BaseVisualizer):
             cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
             
             # Create heatmap
+            labels = [str(i) for i in range(cm.shape[0])]
             sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues',
-                       xticklabels=range(10), yticklabels=range(10), ax=ax)
+                       xticklabels=labels, yticklabels=labels, ax=ax)
             
             ax.set_xlabel('Predicted Label')
             ax.set_ylabel('True Label')
@@ -390,7 +426,7 @@ class ModelVisualizer(BaseVisualizer):
             print(f"Error creating confusion matrix: {e}")
             return None
     
-    def create_roc_analysis(self, save: bool = True) -> Optional[plt.Figure]:
+    def create_roc_analysis(self, save: bool = True) -> Optional[Figure]:
         """
         Create ROC curves for multi-class classification
         """
@@ -411,8 +447,8 @@ class ModelVisualizer(BaseVisualizer):
                            label=f'Class {class_idx} (AUC = {roc_auc:.3f})')
             
             ax.plot([0, 1], [0, 1], color='gray', lw=2, linestyle='--')
-            ax.set_xlim([0.0, 1.0])
-            ax.set_ylim([0.0, 1.05])
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(0.0, 1.05)
             ax.set_xlabel('False Positive Rate')
             ax.set_ylabel('True Positive Rate')
             ax.set_title('ROC Curves (First 3 Classes)')
@@ -437,9 +473,9 @@ class DetectionVisualizer(BaseVisualizer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def create_roc_comparison(self, attacks: List[str] = None, 
-                            characteristics: List[str] = None,
-                            save: bool = True) -> Optional[plt.Figure]:
+    def create_roc_comparison(self, attacks: Optional[List[str]] = None, 
+                            characteristics: Optional[List[str]] = None,
+                            save: bool = True) -> Optional[Figure]:
         """
         Compare ROC curves across characteristics and attacks
         """
@@ -522,7 +558,7 @@ class DetectionVisualizer(BaseVisualizer):
     
     def create_3d_feature_space(self, attack: str = "fgsm", 
                               characteristic: str = "lid",
-                              save: bool = True) -> Optional[plt.Figure]:
+                              save: bool = True) -> Optional[Figure]:
         """
         Create 3D scatter plot of feature space
         """
@@ -573,9 +609,9 @@ class DetectionVisualizer(BaseVisualizer):
             print(f"Error creating 3D feature plot: {e}")
             return None
     
-    def create_probability_distributions(self, attacks: List[str] = None,
-                                       characteristics: List[str] = None,
-                                       save: bool = True) -> Optional[plt.Figure]:
+    def create_probability_distributions(self, attacks: Optional[List[str]] = None,
+                                       characteristics: Optional[List[str]] = None,
+                                       save: bool = True) -> Optional[Figure]:
         """
         Create probability distribution histograms for detection outputs
         """
@@ -657,9 +693,9 @@ class DetectionVisualizer(BaseVisualizer):
             print(f"Error creating probability distributions: {e}")
             return None
     
-    def create_metrics_comparison(self, attacks: List[str] = None,
-                                 characteristics: List[str] = None,
-                                 save: bool = True) -> Optional[plt.Figure]:
+    def create_metrics_comparison(self, attacks: Optional[List[str]] = None,
+                                 characteristics: Optional[List[str]] = None,
+                                 save: bool = True) -> Optional[Figure]:
         """
         Create comprehensive metrics comparison bar charts
         """
@@ -752,4 +788,280 @@ class DetectionVisualizer(BaseVisualizer):
             
         except Exception as e:
             print(f"Error creating metrics comparison: {e}")
+            return None
+
+
+class TDAVisualizer(BaseVisualizer):
+    """Visualizer for Topological Data Analysis (TDA) results"""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def create_persistence_diagram(self, name: str, save: bool = True) -> Optional[Figure]:
+        """
+        Plot persistence diagrams for a given TDA result
+        """
+        try:
+            import json
+            from pathlib import Path
+            
+            # Load TDA data
+            tda_path = Path(f"results/tda/tda_{self.dataset}.json")
+            if not tda_path.exists():
+                # Try alternative naming
+                tda_path = Path(f"results/tda/{name}_{self.dataset}.json")
+                
+            if not tda_path.exists():
+                print(f"TDA data not found at {tda_path}")
+                return None
+                
+            with open(tda_path, 'r') as f:
+                data = json.load(f)
+            
+            diagrams = data['diagrams']
+            
+            fig, axes = plt.subplots(1, len(diagrams), figsize=(6 * len(diagrams), 5))
+            if len(diagrams) == 1:
+                axes = [axes]
+            
+            for dim, dgm in enumerate(diagrams):
+                ax = axes[dim]
+                dgm = np.array(dgm)
+                
+                if len(dgm) > 0:
+                    # Filter out infinite points for plotting
+                    finite_mask = np.isfinite(dgm[:, 1])
+                    finite_dgm = dgm[finite_mask]
+                    
+                    ax.scatter(finite_dgm[:, 0], finite_dgm[:, 1], s=25, c=f'C{dim}', 
+                              alpha=0.6, label=f'H{dim}')
+                    
+                    # Plot diagonal
+                    max_val = np.max(finite_dgm) if len(finite_dgm) > 0 else 1.0
+                    ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.4)
+                    
+                    # Handle infinite points
+                    inf_points = dgm[~finite_mask]
+                    if len(inf_points) > 0:
+                        ax.scatter(inf_points[:, 0], [max_val * 1.1] * len(inf_points), 
+                                  marker='x', c='red', s=50, label='Infinite')
+                
+                ax.set_title(f'Dimension {dim} Persistence')
+                ax.set_xlabel('Birth')
+                ax.set_ylabel('Death')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+            
+            plt.suptitle(f'Persistence Diagrams: {name.upper()}', fontsize=16)
+            plt.tight_layout()
+            
+            if save:
+                self.save_figure(fig, f"persistence_{name}.png", "tda")
+            
+            return fig
+            
+        except Exception as e:
+            print(f"Error creating persistence diagram: {e}")
+            return None
+
+    def create_feature_comparison(self, names: List[str], save: bool = True) -> Optional[Figure]:
+        """
+        Compare topological features across different models
+        """
+        try:
+            import json
+            from pathlib import Path
+            
+            all_features = []
+            for name in names:
+                tda_path = Path(f"data/tda/{name}_{self.dataset}.json")
+                if tda_path.exists():
+                    with open(tda_path, 'r') as f:
+                        data = json.load(f)
+                        feat = data['features']
+                        feat['model_name'] = name
+                        all_features.append(feat)
+            
+            if not all_features:
+                print("No TDA features found for comparison")
+                return None
+                
+            df = pd.DataFrame(all_features)
+            
+            # Select key features to plot
+            plot_features = [f for f in df.columns if 'max_persistence' in f or 'avg_death' in f]
+            
+            fig, axes = plt.subplots(1, len(plot_features), figsize=(5 * len(plot_features), 6))
+            if len(plot_features) == 1:
+                axes = [axes]
+                
+            for i, feat in enumerate(plot_features):
+                ax = axes[i]
+                sns.barplot(x='model_name', y=feat, data=df, ax=ax)
+                ax.set_title(feat.replace('_', ' ').title())
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+                ax.set_xlabel('')
+                ax.grid(True, alpha=0.3, axis='y')
+            
+            plt.suptitle('Topological Feature Comparison', fontsize=16)
+            plt.tight_layout()
+            
+            if save:
+                self.save_figure(fig, "tda_feature_comparison.png", "tda")
+            
+            return fig
+            
+        except Exception as e:
+            print(f"Error creating TDA feature comparison: {e}")
+            return None
+
+    def create_clean_vs_adversarial_comparison(self, attack: str, save: bool = True) -> Optional[Figure]:
+        """
+        Create a side-by-side comparison of clean vs adversarial TDA results
+        """
+        try:
+            import json
+            from pathlib import Path
+            
+            # Load TDA data
+            clean_path = Path(f"data/tda/clean_{self.dataset}.json")
+            adv_path = Path(f"data/tda/{attack}_{self.dataset}.json")
+            
+            if not clean_path.exists() or not adv_path.exists():
+                print(f"TDA data not found. Clean: {clean_path.exists()}, Adv: {adv_path.exists()}")
+                return None
+                
+            with open(clean_path, 'r') as f:
+                clean_data = json.load(f)
+            with open(adv_path, 'r') as f:
+                adv_data = json.load(f)
+            
+            clean_dgms = clean_data['diagrams']
+            adv_dgms = adv_data['diagrams']
+            
+            # We'll plot H1 for both
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+            
+            # 1. Clean H1 Persistence
+            ax = axes[0, 0]
+            dgm = np.array(clean_dgms[1]) if len(clean_dgms) > 1 else np.array([])
+            if len(dgm) > 0:
+                finite_dgm = dgm[np.isfinite(dgm[:, 1])]
+                ax.scatter(finite_dgm[:, 0], finite_dgm[:, 1], s=30, c='blue', alpha=0.6, label='Clean H1')
+                max_val = np.max(finite_dgm) if len(finite_dgm) > 0 else 1.0
+                ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.4)
+            ax.set_title('Clean Data Persistence (H1)')
+            ax.set_xlabel('Birth')
+            ax.set_ylabel('Death')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # 2. Adversarial H1 Persistence
+            ax = axes[0, 1]
+            dgm = np.array(adv_dgms[1]) if len(adv_dgms) > 1 else np.array([])
+            if len(dgm) > 0:
+                finite_dgm = dgm[np.isfinite(dgm[:, 1])]
+                ax.scatter(finite_dgm[:, 0], finite_dgm[:, 1], s=30, c='red', alpha=0.6, label=f'{attack.upper()} H1')
+                max_val = np.max(finite_dgm) if len(finite_dgm) > 0 else 1.0
+                ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.4)
+            ax.set_title(f'Adversarial ({attack.upper()}) Persistence (H1)')
+            ax.set_xlabel('Birth')
+            ax.set_ylabel('Death')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # 3. Feature Comparison Bar Chart
+            ax = axes[1, 0]
+            clean_feat = clean_data['features']
+            adv_feat = adv_data['features']
+            
+            labels = ['Max Persistence', 'Avg Death', 'Num Points']
+            clean_vals = [clean_feat['dim1_max_persistence'], clean_feat['dim1_avg_death'], clean_feat['dim1_num_points']]
+            adv_vals = [adv_feat['dim1_max_persistence'], adv_feat['dim1_avg_death'], adv_feat['dim1_num_points']]
+            
+            # Normalize for visualization if needed, but here we just plot
+            x = np.arange(len(labels))
+            width = 0.35
+            ax.bar(x - width/2, clean_vals, width, label='Clean', color='blue', alpha=0.7)
+            ax.bar(x + width/2, adv_vals, width, label='Adversarial', color='red', alpha=0.7)
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels)
+            ax.set_title('H1 Feature Comparison')
+            ax.legend()
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            # 4. Persistence Histogram
+            ax = axes[1, 1]
+            if len(clean_dgms) > 1 and len(adv_dgms) > 1:
+                c_dgm = np.array(clean_dgms[1])
+                a_dgm = np.array(adv_dgms[1])
+                c_pers = c_dgm[np.isfinite(c_dgm[:, 1]), 1] - c_dgm[np.isfinite(c_dgm[:, 1]), 0]
+                a_pers = a_dgm[np.isfinite(a_dgm[:, 1]), 1] - a_dgm[np.isfinite(a_dgm[:, 1]), 0]
+                
+                ax.hist(c_pers, bins=20, alpha=0.5, label='Clean', color='blue', density=True)
+                ax.hist(a_pers, bins=20, alpha=0.5, label='Adversarial', color='red', density=True)
+                ax.set_title('H1 Persistence Distribution')
+                ax.set_xlabel('Persistence (Death - Birth)')
+                ax.set_ylabel('Density')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+            
+            plt.suptitle(f'TDA Comparison: Clean vs {attack.upper()} Adversarial (MNIST)', fontsize=16)
+            plt.tight_layout(rect=(0, 0.03, 1, 0.95))
+            
+            if save:
+                self.save_figure(fig, f"tda_comparison_clean_{attack}.png", "tda")
+            
+            return fig
+            
+        except Exception as e:
+            print(f"Error creating TDA clean vs adversarial comparison: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def create_correlation_matrix_plot(self, name: str, save: bool = True) -> Optional[Figure]:
+        """
+        Visualize the neuron correlation matrix
+        """
+        try:
+            import json
+            from pathlib import Path
+            
+            # Load TDA data
+            tda_path = Path(f"results/tda/tda_{self.dataset}.json")
+            if not tda_path.exists():
+                # Try alternative naming
+                tda_path = Path(f"results/tda/{name}_{self.dataset}.json")
+                
+            if not tda_path.exists():
+                print(f"TDA data not found at {tda_path}")
+                return None
+                
+            with open(tda_path, 'r') as f:
+                data = json.load(f)
+            
+            if 'correlation_matrix' not in data:
+                print(f"Correlation matrix not found in {tda_path}")
+                return None
+                
+            corr_matrix = np.array(data['correlation_matrix'])
+            
+            fig, ax = plt.subplots(figsize=(10, 8))
+            im = ax.imshow(corr_matrix, cmap='RdBu_r', vmin=-1, vmax=1)
+            plt.colorbar(im, ax=ax)
+            
+            ax.set_title(f'Neuron Correlation Matrix: {name.upper()}')
+            ax.set_xlabel('Neuron Index')
+            ax.set_ylabel('Neuron Index')
+            
+            plt.tight_layout()
+            
+            if save:
+                self.save_figure(fig, f"correlation_matrix_{name}.png", "tda")
+            
+            return fig
+            
+        except Exception as e:
+            print(f"Error creating correlation matrix plot: {e}")
             return None

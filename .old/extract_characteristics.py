@@ -1,417 +1,385 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
-import os
 import argparse
-import warnings
+import os
+import torch
+import torch.nn as nn
 import numpy as np
+from tqdm import tqdm
 from sklearn.neighbors import KernelDensity
-from keras.models import load_model
-
-from util import (get_data, get_noisy_samples, get_mc_predictions,
-                      get_deep_representations, score_samples, normalize,
-                      get_lids_random_batch, get_kmeans_random_batch)
-
-# In the original paper, the author used optimal KDE bandwidths dataset-wise
-#  that were determined from CV tuning
-BANDWIDTHS = {'mnist': 3.7926, 'cifar': 0.26, 'svhn': 1.00}
-
-# Here we further tune bandwidth for each of the 10 classes in mnist, cifar and svhn
-# Run tune_kernal_density.py to get the following settings.
-# BANDWIDTHS = {'mnist': [0.2637, 0.1274, 0.2637, 0.2637, 0.2637, 0.2637, 0.2637, 0.2069, 0.3360, 0.2637],
-#               'cifar': [0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1000],
-#               'svhn': [0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1000, 0.1274, 0.1000, 0.1000]}
+from util import get_data, get_model, FeatureExtractor, mle_batch, get_kmeans_random_batch, CLIP_MIN, CLIP_MAX
+import scipy.io as sio
 
 PATH_DATA = "data/"
-PATH_IMAGES = "plots/"
 
-def merge_and_generate_labels(X_pos, X_neg):
+# Standard deviations for noisy samples (from original code)
+STDEVS = {
+    'mnist': {'fgsm': 0.264, 'bim-a': 0.111, 'bim-b': 0.184, 'cw-l2': 0.588},
+    'cifar': {'fgsm': 0.0504, 'bim-a': 0.0087, 'bim-b': 0.0439, 'cw-l2': 0.015},
+    'svhn': {'fgsm': 0.1332, 'bim-a': 0.015, 'bim-b': 0.1024, 'cw-l2': 0.0379}
+}
+
+# Bandwidths for KDE (from original code)
+BANDWIDTHS = {'mnist': 3.7926, 'cifar': 0.26, 'svhn': 1.00}
+
+def get_noisy_samples(X_test, dataset, attack):
     """
-    merge positve and nagative artifact and generate labels
-    :param X_pos: positive samples
-    :param X_neg: negative samples
-    :return: X: merged samples, 2D ndarray
-             y: generated labels (0/1): 2D ndarray same size as X
+    Add Gaussian noise to X_test
     """
-    X_pos = np.asarray(X_pos, dtype=np.float32)
-    print("X_pos: ", X_pos.shape)
-    X_pos = X_pos.reshape((X_pos.shape[0], -1))
+    # If attack not in dictionary (e.g. cw-lid), use a default or cw-l2
+    if attack not in STDEVS[dataset]:
+        std = STDEVS[dataset]['cw-l2'] # Default
+    else:
+        std = STDEVS[dataset][attack]
+        
+    noise = np.random.normal(loc=0, scale=std, size=X_test.shape)
+    X_noisy = np.clip(X_test + noise, CLIP_MIN, CLIP_MAX)
+    return X_noisy.astype(np.float32)
 
-    X_neg = np.asarray(X_neg, dtype=np.float32)
-    print("X_neg: ", X_neg.shape)
-    X_neg = X_neg.reshape((X_neg.shape[0], -1))
-
-    X = np.concatenate((X_pos, X_neg))
-    y = np.concatenate((np.ones(X_pos.shape[0]), np.zeros(X_neg.shape[0])))
-    y = y.reshape((X.shape[0], 1))
-
-    return X, y
-
-
-def get_kd(model, X_train, Y_train, X_test, X_test_noisy, X_test_adv):
+def get_deep_representations(model, loader, device):
     """
-    Get kernel density scores
-    :param model: 
-    :param X_train: 
-    :param Y_train: 
-    :param X_test: 
-    :param X_test_noisy: 
-    :param X_test_adv: 
-    :return: artifacts: positive and negative examples with kd values, 
-            labels: adversarial (label: 1) and normal/noisy (label: 0) examples
+    Get output of penultimate layer (before logits)
     """
-    # Get deep feature representations
-    print('Getting deep feature representations...')
-    X_train_features = get_deep_representations(model, X_train,
-                                                batch_size=args.batch_size)
-    X_test_normal_features = get_deep_representations(model, X_test,
-                                                      batch_size=args.batch_size)
-    X_test_noisy_features = get_deep_representations(model, X_test_noisy,
-                                                     batch_size=args.batch_size)
-    X_test_adv_features = get_deep_representations(model, X_test_adv,
-                                                   batch_size=args.batch_size)
-    # Train one KDE per class
-    print('Training KDEs...')
-    class_inds = {}
-    for i in range(Y_train.shape[1]):
-        class_inds[i] = np.where(Y_train.argmax(axis=1) == i)[0]
-    kdes = {}
-    warnings.warn("Using pre-set kernel bandwidths that were determined "
-                  "optimal for the specific CNN models of the paper. If you've "
-                  "changed your model, you'll need to re-optimize the "
-                  "bandwidth.")
-    print('bandwidth %.4f for %s' % (BANDWIDTHS[args.dataset], args.dataset))
-    for i in range(Y_train.shape[1]):
-        kdes[i] = KernelDensity(kernel='gaussian',
-                                bandwidth=BANDWIDTHS[args.dataset]) \
-            .fit(X_train_features[class_inds[i]])
-    # Get model predictions
-    print('Computing model predictions...')
-    preds_test_normal = model.predict_classes(X_test, verbose=0,
-                                              batch_size=args.batch_size)
-    preds_test_noisy = model.predict_classes(X_test_noisy, verbose=0,
-                                             batch_size=args.batch_size)
-    preds_test_adv = model.predict_classes(X_test_adv, verbose=0,
-                                           batch_size=args.batch_size)
-    # Get density estimates
-    print('computing densities...')
-    densities_normal = score_samples(
-        kdes,
-        X_test_normal_features,
-        preds_test_normal
-    )
-    densities_noisy = score_samples(
-        kdes,
-        X_test_noisy_features,
-        preds_test_noisy
-    )
-    densities_adv = score_samples(
-        kdes,
-        X_test_adv_features,
-        preds_test_adv
-    )
+    model.eval()
+    features = []
+    # We need to define what is "deep representation". 
+    # Usually the input to the final Linear layer.
+    # We can use a hook on the input of the last fc layer, or output of second to last.
+    # For simplicity, let's hook the input of the last layer.
+    
+    last_layer = list(model.children())[-1]
+    # If model is defined as in util.py, last layer is 'fc2' (MNIST) or 'fc3' (CIFAR/SVHN).
+    # Let's try to identify it dynamically or hardcode based on model type.
+    
+    # Generic approach: register hook on final linear layer's input.
+    
+    deep_feats = []
+    def hook(module, input, output):
+        deep_feats.append(input[0].detach().cpu().numpy())
+        
+    # Find last Linear layer
+    modules = list(model.named_modules())
+    last_linear_name = None
+    last_linear_module = None
+    for name, m in reversed(modules):
+        if isinstance(m, nn.Linear):
+            last_linear_name = name
+            last_linear_module = m
+            break
+            
+    handle = last_linear_module.register_forward_hook(hook)
+    
+    for inputs, _ in loader:
+        inputs = inputs.to(device)
+        deep_feats[:] = [] # Clear buffer
+        _ = model(inputs)
+        # deep_feats now has [batch_size, features]
+        features.append(np.concatenate(deep_feats, axis=0))
+        
+    handle.remove()
+    return np.concatenate(features, axis=0)
 
-    print("densities_normal:", densities_normal.shape)
-    print("densities_adv:", densities_adv.shape)
-    print("densities_noisy:", densities_noisy.shape)
-
-    ## skip the normalization, you may want to try different normalizations later
-    ## so at this step, just save the raw values
-    # densities_normal_z, densities_adv_z, densities_noisy_z = normalize(
-    #     densities_normal,
-    #     densities_adv,
-    #     densities_noisy
-    # )
-
-    densities_pos = densities_adv
-    densities_neg = np.concatenate((densities_normal, densities_noisy))
-    artifacts, labels = merge_and_generate_labels(densities_pos, densities_neg)
-
-    return artifacts, labels
-
-def get_bu(model, X_test, X_test_noisy, X_test_adv):
+def get_mc_predictions(model, inputs_tensor, nb_iter=50, batch_size=256):
     """
-    Get Bayesian uncertainty scores
-    :param model: 
-    :param X_train: 
-    :param Y_train: 
-    :param X_test: 
-    :param X_test_noisy: 
-    :param X_test_adv: 
-    :return: artifacts: positive and negative examples with bu values, 
-            labels: adversarial (label: 1) and normal/noisy (label: 0) examples
+    Get Monte Carlo predictions (enable dropout)
     """
-    print('Getting Monte Carlo dropout variance predictions...')
-    uncerts_normal = get_mc_predictions(model, X_test,
-                                        batch_size=args.batch_size) \
-        .var(axis=0).mean(axis=1)
-    uncerts_noisy = get_mc_predictions(model, X_test_noisy,
-                                       batch_size=args.batch_size) \
-        .var(axis=0).mean(axis=1)
-    uncerts_adv = get_mc_predictions(model, X_test_adv,
-                                     batch_size=args.batch_size) \
-        .var(axis=0).mean(axis=1)
+    device = inputs_tensor.device
+    model.train() # Enable dropout
+    
+    # We need to ensure ONLY dropout is active, but Batch Norm statistics should ideally be frozen (eval mode).
+    # PyTorch 'train()' enables both. 
+    # To do MC Dropout correctly: model.eval(), then manually set dropout layers to train.
+    model.eval()
+    for m in model.modules():
+        if isinstance(m, nn.Dropout):
+            m.train()
+            
+    preds = []
+    n_batches = int(np.ceil(inputs_tensor.size(0) / batch_size))
+    
+    for i in range(nb_iter):
+        iter_preds = []
+        for b in range(n_batches):
+            batch = inputs_tensor[b*batch_size : (b+1)*batch_size]
+            with torch.no_grad():
+                output = model(batch)
+            iter_preds.append(output.cpu().numpy())
+        preds.append(np.concatenate(iter_preds, axis=0))
+        
+    return np.array(preds) # (nb_iter, N, classes)
 
-    print("uncerts_normal:", uncerts_normal.shape)
-    print("uncerts_noisy:", uncerts_noisy.shape)
-    print("uncerts_adv:", uncerts_adv.shape)
-
-    ## skip the normalization, you may want to try different normalizations later
-    ## so at this step, just save the raw values
-    # uncerts_normal_z, uncerts_adv_z, uncerts_noisy_z = normalize(
-    #     uncerts_normal,
-    #     uncerts_adv,
-    #     uncerts_noisy
-    # )
-
-    uncerts_pos = uncerts_adv
-    uncerts_neg = np.concatenate((uncerts_normal, uncerts_noisy))
-    artifacts, labels = merge_and_generate_labels(uncerts_pos, uncerts_neg)
-
-    return artifacts, labels
-
-def get_lid(model, X_test, X_test_noisy, X_test_adv, k=10, batch_size=100, dataset='mnist'):
+def get_lids_random_batch(model, X, X_noisy, X_adv, dataset, k=20, batch_size=100, device='cpu'):
     """
-    Get local intrinsic dimensionality
-    :param model: 
-    :param X_train: 
-    :param Y_train: 
-    :param X_test: 
-    :param X_test_noisy: 
-    :param X_test_adv: 
-    :return: artifacts: positive and negative examples with lid values, 
-            labels: adversarial (label: 1) and normal/noisy (label: 0) examples
+    Extract LID characteristics
     """
-    print('Extract local intrinsic dimensionality: k = %s' % k)
-    lids_normal, lids_noisy, lids_adv = get_lids_random_batch(model, X_test, X_test_noisy,
-                                                              X_test_adv, dataset, k, batch_size)
-    print("lids_normal:", lids_normal.shape)
-    print("lids_noisy:", lids_noisy.shape)
-    print("lids_adv:", lids_adv.shape)
+    # Convert to loaders or process in batches
+    # We need to extract features for all 3 sets.
+    # Use FeatureExtractor
+    
+    extractor = FeatureExtractor(model)
+    model.eval()
+    
+    # Helper to get features for a batch
+    def get_batch_features(batch_x):
+        batch_x = torch.from_numpy(batch_x).to(device)
+        feats = extractor(batch_x) # List of tensors
+        return [f.detach().cpu().numpy() for f in feats]
 
-    ## skip the normalization, you may want to try different normalizations later
-    ## so at this step, just save the raw values
-    # lids_normal_z, lids_adv_z, lids_noisy_z = normalize(
-    #     lids_normal,
-    #     lids_adv,
-    #     lids_noisy
-    # )
+    n_batches = int(np.ceil(X.shape[0] / batch_size))
+    
+    lids = []
+    lids_noisy = []
+    lids_adv = []
+    
+    for i in tqdm(range(n_batches), desc="LID Extraction"):
+        start = i * batch_size
+        end = min((i + 1) * batch_size, X.shape[0])
+        
+        batch_X = X[start:end]
+        batch_noisy = X_noisy[start:end]
+        batch_adv = X_adv[start:end]
+        
+        # Get features
+        # Note: original code calculates LID for a batch relative to ITSELF (random batch).
+        # "LID estimated by k close neighbours in the random batch it lies in."
+        
+        # We process Clean, Noisy, Adv separately?
+        # The code computes:
+        # lid_batch[:, i] = mle_batch(X_act, X_act, k=k)
+        # lid_batch_adv[:, i] = mle_batch(X_act, X_adv_act, k=k) ??
+        # Wait, the original code:
+        # lid_batch_adv[:, i] = mle_batch(X_act, X_adv_act, k=k)
+        # It computes LID of Adv samples relative to Clean samples in the batch?
+        # Yes: `mle_batch(data, batch)` -> data is reference, batch is query.
+        # So reference is always X_act (clean).
+        
+        clean_feats = get_batch_features(batch_X)
+        noisy_feats = get_batch_features(batch_noisy)
+        adv_feats = get_batch_features(batch_adv)
+        
+        # Number of layers
+        lid_dim = len(clean_feats)
+        
+        b_lids = np.zeros((len(batch_X), lid_dim))
+        b_lids_noisy = np.zeros((len(batch_X), lid_dim))
+        b_lids_adv = np.zeros((len(batch_X), lid_dim))
+        
+        for l in range(lid_dim):
+            f_clean = clean_feats[l].reshape(len(batch_X), -1)
+            f_noisy = noisy_feats[l].reshape(len(batch_X), -1)
+            f_adv = adv_feats[l].reshape(len(batch_X), -1)
+            
+            # LID of clean relative to clean
+            b_lids[:, l] = mle_batch(f_clean, f_clean, k=k)
+            
+            # LID of noisy relative to clean
+            b_lids_noisy[:, l] = mle_batch(f_clean, f_noisy, k=k)
+            
+            # LID of adv relative to clean
+            b_lids_adv[:, l] = mle_batch(f_clean, f_adv, k=k)
+            
+        lids.append(b_lids)
+        lids_noisy.append(b_lids_noisy)
+        lids_adv.append(b_lids_adv)
+        
+    lids = np.concatenate(lids, axis=0)
+    lids_noisy = np.concatenate(lids_noisy, axis=0)
+    lids_adv = np.concatenate(lids_adv, axis=0)
+    
+    extractor.close()
+    return lids, lids_noisy, lids_adv
 
-    lids_pos = lids_adv
-    lids_neg = np.concatenate((lids_normal, lids_noisy))
-    artifacts, labels = merge_and_generate_labels(lids_pos, lids_neg)
-
-    return artifacts, labels
-
-def get_kmeans(model, X_test, X_test_noisy, X_test_adv, k=10, batch_size=100, dataset='mnist'):
+def get_kms(model, X, X_noisy, X_adv, dataset, k=20, batch_size=100, device='cpu', pca=True):
     """
-    Calculate the average distance to k nearest neighbours as a feature.
-    This is used to compare density vs LID. Why density doesn't work?
-    :param model: 
-    :param X_train: 
-    :param Y_train: 
-    :param X_test: 
-    :param X_test_noisy: 
-    :param X_test_adv: 
-    :return: artifacts: positive and negative examples with lid values, 
-            labels: adversarial (label: 1) and normal/noisy (label: 0) examples
+    Extract KMeans characteristics (mean distance to k nearest neighbors)
     """
     print('Extract k means feature: k = %s' % k)
-    kms_normal, kms_noisy, kms_adv = get_kmeans_random_batch(model, X_test, X_test_noisy,
-                                                              X_test_adv, dataset, k, batch_size,
-                                                             pca=True)
+    kms_normal, kms_noisy, kms_adv = get_kmeans_random_batch(model, X, X_noisy,
+                                                              X_adv, dataset, k, batch_size,
+                                                              device, pca=pca)
     print("kms_normal:", kms_normal.shape)
     print("kms_noisy:", kms_noisy.shape)
     print("kms_adv:", kms_adv.shape)
 
-    ## skip the normalization, you may want to try different normalizations later
-    ## so at this step, just save the raw values
-    # kms_normal_z, kms_noisy_z, kms_adv_z = normalize(
-    #     kms_normal,
-    #     kms_noisy,
-    #     kms_adv
-    # )
+    return kms_normal, kms_noisy, kms_adv
 
-    kms_pos = kms_adv
-    kms_neg = np.concatenate((kms_normal, kms_noisy))
-    artifacts, labels = merge_and_generate_labels(kms_pos, kms_neg)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--dataset', required=True, type=str)
+    parser.add_argument('-a', '--attack', required=True, type=str)
+    parser.add_argument('-r', '--characteristic', required=True, type=str, choices=['kd', 'bu', 'lid', 'km', 'all'])
+    parser.add_argument('-k', '--k_nearest', default=20, type=int)
+    parser.add_argument('-b', '--batch_size', default=100, type=int)
+    args = parser.parse_args()
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Load Model
+    model = get_model(args.dataset).to(device)
+    model.load_state_dict(torch.load(os.path.join(PATH_DATA, f"model_{args.dataset}.pth"), map_location=device))
+    model.eval()
+    
+    # Load Data
+    # We need X_train (for KDE), X_test, Y_test
+    # get_data returns loaders. We can extract arrays.
+    train_loader, test_loader = get_data(args.dataset, batch_size=args.batch_size, augmentation=False)
+    
+    # Helper to get all data from loader
+    def loader_to_numpy(loader):
+        X = []
+        Y = []
+        for x, y in loader:
+            X.append(x.numpy())
+            Y.append(y.numpy()) # Indices
+        return np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
 
-    return artifacts, labels
-
-def main(args):
-    assert args.dataset in ['mnist', 'cifar', 'svhn'], \
-        "Dataset parameter must be either 'mnist', 'cifar' or 'svhn'"
-    assert args.attack in ['fgsm', 'bim-a', 'bim-b', 'jsma', 'cw-l2', 'all'], \
-        "Attack parameter must be either 'fgsm', 'bim-a', 'bim-b', " \
-        "'jsma' or 'cw-l2'"
-    assert args.characteristic in ['kd', 'bu', 'lid', 'km', 'all'], \
-        "Characteristic(s) to use 'kd', 'bu', 'lid', 'km', 'all'"
-    model_file = os.path.join(PATH_DATA, "model_%s.h5" % args.dataset)
-    assert os.path.isfile(model_file), \
-        'model file not found... must first train model using train_model.py.'
-    adv_file = os.path.join(PATH_DATA, "Adv_%s_%s.npy" % (args.dataset, args.attack))
-    assert os.path.isfile(adv_file), \
-        'adversarial sample file not found... must first craft adversarial ' \
-        'samples using craft_adv_samples.py'
-
-    print('Loading the data and model...')
-    # Load the model
-    model = load_model(model_file)
-    # Load the dataset
-    X_train, Y_train, X_test, Y_test = get_data(args.dataset)
-    # Check attack type, select adversarial and noisy samples accordingly
-    print('Loading noisy and adversarial samples...')
-    if args.attack == 'all':
-        # TODO: implement 'all' option
-        # X_test_adv = ...
-        # X_test_noisy = ...
-        raise NotImplementedError("'All' types detector not yet implemented.")
+    print("Loading data...")
+    X_test, Y_test_indices = loader_to_numpy(test_loader)
+    
+    # Load Adversarial
+    adv_path = os.path.join(PATH_DATA, f"Adv_{args.dataset}_{args.attack}.npy")
+    if not os.path.exists(adv_path):
+        raise FileNotFoundError(f"Adversarial examples not found at {adv_path}")
+    X_adv = np.load(adv_path)
+    
+    # Generate/Load Noisy
+    noisy_path = os.path.join(PATH_DATA, f"Noisy_{args.dataset}_{args.attack}.npy")
+    if os.path.exists(noisy_path):
+        X_noisy = np.load(noisy_path)
     else:
-        # Load adversarial samples
-        X_test_adv = np.load(adv_file)
-        print("X_test_adv: ", X_test_adv.shape)
+        print("Generating noisy samples...")
+        X_noisy = get_noisy_samples(X_test, args.dataset, args.attack)
+        np.save(noisy_path, X_noisy)
+        
+    # Truncate to match lengths (if adv generated on subset, though craft_adv uses full test)
+    min_len = min(len(X_test), len(X_adv), len(X_noisy))
+    X_test = X_test[:min_len]
+    X_adv = X_adv[:min_len]
+    X_noisy = X_noisy[:min_len]
+    Y_test_indices = Y_test_indices[:min_len]
+    
+    # Only use correctly classified clean samples
+    print("Filtering correctly classified samples...")
+    
+    # We need to batch predict
+    def predict_batch(X):
+        model.eval()
+        preds = []
+        bs = args.batch_size
+        for i in range(0, len(X), bs):
+            bx = torch.from_numpy(X[i:i+bs]).to(device)
+            with torch.no_grad():
+                out = model(bx)
+            preds.append(out.argmax(1).cpu().numpy())
+        return np.concatenate(preds)
 
-        # as there are some parameters to tune for noisy example, so put the generation
-        # step here instead of the adversarial step which can take many hours
-        noisy_file = os.path.join(PATH_DATA, 'Noisy_%s_%s.npy' % (args.dataset, args.attack))
-        if os.path.isfile(noisy_file):
-            X_test_noisy = np.load(noisy_file)
-        else:
-            # Craft an equal number of noisy samples
-            print('Crafting %s noisy samples. ' % args.dataset)
-            X_test_noisy = get_noisy_samples(X_test, X_test_adv, args.dataset, args.attack)
-            np.save(noisy_file, X_test_noisy)
+    preds = predict_batch(X_test)
+    correct_idxs = np.where(preds == Y_test_indices)[0]
+    
+    X_test = X_test[correct_idxs]
+    X_adv = X_adv[correct_idxs]
+    X_noisy = X_noisy[correct_idxs]
+    Y_test_indices = Y_test_indices[correct_idxs]
+    
+    print(f"Using {len(X_test)} correctly classified samples.")
+    
+    def merge_and_save(pos, neg, name):
+        # pos: adv, neg: normal + noisy
+        X_pos = pos
+        X_neg = neg
+        X = np.concatenate((X_pos, X_neg), axis=0)
+        y = np.concatenate((np.ones(len(X_pos)), np.zeros(len(X_neg))))
+        
+        data = np.concatenate((X, y.reshape(-1, 1)), axis=1)
 
-    # Check model accuracies on each sample type
-    for s_type, dataset in zip(['normal', 'noisy', 'adversarial'],
-                               [X_test, X_test_noisy, X_test_adv]):
-        _, acc = model.evaluate(dataset, Y_test, batch_size=args.batch_size,
-                                verbose=0)
-        print("Model accuracy on the %s test set: %0.2f%%" %
-              (s_type, 100 * acc))
-        # Compute and display average perturbation sizes
-        if not s_type == 'normal':
-            l2_diff = np.linalg.norm(
-                dataset.reshape((len(X_test), -1)) -
-                X_test.reshape((len(X_test), -1)),
-                axis=1
-            ).mean()
-            print("Average L-2 perturbation size of the %s test set: %0.2f" %
-                  (s_type, l2_diff))
+        save_name = os.path.join(PATH_DATA, f"{name}_{args.dataset}_{args.attack}.npy")
+        np.save(save_name, data)
+        print(f"Saved to {save_name}")
 
-    # Refine the normal, noisy and adversarial sets to only include samples for
-    # which the original version was correctly classified by the model
-    preds_test = model.predict_classes(X_test, verbose=0,
-                                       batch_size=args.batch_size)
-    inds_correct = np.where(preds_test == Y_test.argmax(axis=1))[0]
-    print("Number of correctly predict images: %s" % (len(inds_correct)))
+    # Characteristics
+    if args.characteristic in ['lid', 'all']:
+        lids_normal, lids_noisy, lids_adv = get_lids_random_batch(model, X_test, X_noisy, X_adv, 
+                                                                  args.dataset, k=args.k_nearest, 
+                                                                  batch_size=args.batch_size, device=device)
+        
+        # Merge: Pos=Adv, Neg=Normal+Noisy
+        lids_pos = lids_adv
+        lids_neg = np.concatenate((lids_normal, lids_noisy), axis=0)
+        merge_and_save(lids_pos, lids_neg, 'lid')
 
-    X_test = X_test[inds_correct]
-    X_test_noisy = X_test_noisy[inds_correct]
-    X_test_adv = X_test_adv[inds_correct]
-    print("X_test: ", X_test.shape)
-    print("X_test_noisy: ", X_test_noisy.shape)
-    print("X_test_adv: ", X_test_adv.shape)
+    if args.characteristic in ['kd', 'all']:
+        # Needs X_train for fitting KDE
+        print("Loading training data for KDE...")
+        X_train, Y_train_indices = loader_to_numpy(train_loader)
+        
+        # Extract features
+        # To save time, maybe subsample X_train? Original code uses full.
+        # But feature extraction on 60k images takes time.
+        
+        # Wrapper to get deep feats for numpy array
+        def get_feats_numpy(X):
+            ds = torch.utils.data.TensorDataset(torch.from_numpy(X), torch.zeros(len(X))) # Dummy y
+            dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size)
+            return get_deep_representations(model, dl, device)
 
-    if args.characteristic == 'kd':
-        # extract kernel density
-        characteristics, labels = get_kd(model, X_train, Y_train, X_test, X_test_noisy, X_test_adv)
-        print("KD: [characteristic shape: ", characteristics.shape, ", label shape: ", labels.shape)
+        print("Extracting features...")
+        feats_train = get_feats_numpy(X_train)
+        feats_test = get_feats_numpy(X_test)
+        feats_noisy = get_feats_numpy(X_noisy)
+        feats_adv = get_feats_numpy(X_adv)
+        
+        # Train KDE per class
+        kdes = {}
+        for i in range(10):
+            class_subset = feats_train[Y_train_indices == i]
+            kdes[i] = KernelDensity(kernel='gaussian', bandwidth=BANDWIDTHS[args.dataset]).fit(class_subset)
+            
+        # Score
+        def score_samples(kdes, feats, preds):
+            densities = []
+            for i in range(len(feats)):
+                label = preds[i]
+                densities.append(kdes[label].score_samples(feats[i].reshape(1, -1))[0])
+            return np.array(densities).reshape(-1, 1)
 
-        # save to file
-        bandwidth = BANDWIDTHS[args.dataset]
-        file_name = os.path.join(PATH_DATA, 'kd_%s_%s_%.4f.npy' % (args.dataset, args.attack, bandwidth))
-        data = np.concatenate((characteristics, labels), axis=1)
-        np.save(file_name, data)
-    elif args.characteristic == 'bu':
-        # extract Bayesian uncertainty
-        characteristics, labels = get_bu(model, X_test, X_test_noisy, X_test_adv)
-        print("BU: [characteristic shape: ", characteristics.shape, ", label shape: ", labels.shape)
+        # We need predictions for test samples to know which KDE to use
+        # Original code uses model predictions.
+        preds_test = predict_batch(X_test)
+        preds_noisy = predict_batch(X_noisy)
+        preds_adv = predict_batch(X_adv)
+        
+        densities_normal = score_samples(kdes, feats_test, preds_test)
+        densities_noisy = score_samples(kdes, feats_noisy, preds_noisy)
+        densities_adv = score_samples(kdes, feats_adv, preds_adv)
+        
+        merge_and_save(densities_adv, np.concatenate((densities_normal, densities_noisy), axis=0), 'kd')
 
-        # save to file
-        file_name = os.path.join(PATH_DATA, 'bu_%s_%s.npy' % (args.dataset, args.attack))
-        data = np.concatenate((characteristics, labels), axis=1)
-        np.save(file_name, data)
-    elif args.characteristic == 'lid':
-        # extract local intrinsic dimensionality
-        characteristics, labels = get_lid(model, X_test, X_test_noisy, X_test_adv,
-                                    args.k_nearest, args.batch_size, args.dataset)
-        print("LID: [characteristic shape: ", characteristics.shape, ", label shape: ", labels.shape)
+    if args.characteristic in ['bu', 'all']:
+        print("Calculating Bayesian Uncertainty...")
+        # Variance of predictions
+        # get_mc_predictions returns (iter, N, classes)
+        # We want mean variance?
+        # Original code: .var(axis=0).mean(axis=1) -> Variance across iterations, then mean across classes?
+        
+        def get_bu_values(X):
+            X_tensor = torch.from_numpy(X).to(device)
+            preds = get_mc_predictions(model, X_tensor, nb_iter=50, batch_size=args.batch_size)
+            return preds.var(axis=0).mean(axis=1).reshape(-1, 1)
+        
+        bu_normal = get_bu_values(X_test)
+        bu_noisy = get_bu_values(X_noisy)
+        bu_adv = get_bu_values(X_adv)
+        
+        merge_and_save(bu_adv, np.concatenate((bu_normal, bu_noisy), axis=0), 'bu')
 
-        # save to file
-        # file_name = os.path.join(PATH_DATA, 'lid_%s_%s.npy' % (args.dataset, args.attack))
-        file_name = os.path.join('../data_grid_search/lid_large_batch/', 'lid_%s_%s_%s.npy' %
-                                 (args.dataset, args.attack, args.k_nearest))
-
-        data = np.concatenate((characteristics, labels), axis=1)
-        np.save(file_name, data)
-    elif args.characteristic == 'km':
-        # extract k means distance
-        characteristics, labels = get_kmeans(model, X_test, X_test_noisy, X_test_adv,
-                                    args.k_nearest, args.batch_size, args.dataset)
-        print("K-Mean: [characteristic shape: ", characteristics.shape, ", label shape: ", labels.shape)
-
-        # save to file
-        file_name = os.path.join(PATH_DATA, 'km_pca_%s_%s.npy' % (args.dataset, args.attack))
-        data = np.concatenate((characteristics, labels), axis=1)
-        np.save(file_name, data)
-    elif args.characteristic == 'all':
-        # extract kernel density
-        characteristics, labels = get_kd(model, X_train, Y_train, X_test, X_test_noisy, X_test_adv)
-        file_name = os.path.join(PATH_DATA, 'kd_%s_%s.npy' % (args.dataset, args.attack))
-        data = np.concatenate((characteristics, labels), axis=1)
-        np.save(file_name, data)
-
-        # extract Bayesian uncertainty
-        characteristics, labels = get_bu(model, X_test, X_test_noisy, X_test_adv)
-        file_name = os.path.join(PATH_DATA, 'bu_%s_%s.npy' % (args.dataset, args.attack))
-        data = np.concatenate((characteristics, labels), axis=1)
-        np.save(file_name, data)
-
-        # extract local intrinsic dimensionality
-        characteristics, labels = get_lid(model, X_test, X_test_noisy, X_test_adv,
-                                    args.k_nearest, args.batch_size, args.dataset)
-        file_name = os.path.join(PATH_DATA, 'lid_%s_%s.npy' % (args.dataset, args.attack))
-        data = np.concatenate((characteristics, labels), axis=1)
-        np.save(file_name, data)
-
-        # extract k means distance
-        # artifcharacteristics, labels = get_kmeans(model, X_test, X_test_noisy, X_test_adv,
-        #                                args.k_nearest, args.batch_size, args.dataset)
-        # file_name = os.path.join(PATH_DATA, 'km_%s_%s.npy' % (args.dataset, args.attack))
-        # data = np.concatenate((characteristics, labels), axis=1)
-        # np.save(file_name, data)
-
+    if args.characteristic in ['km', 'all']:
+        print("Extracting KMeans characteristics...")
+        kms_normal, kms_noisy, kms_adv = get_kms(model, X_test, X_noisy, X_adv,
+                                                 args.dataset, k=args.k_nearest,
+                                                 batch_size=args.batch_size, device=device)
+        
+        # Merge: Pos=Adv, Neg=Normal+Noisy
+        kms_pos = kms_adv
+        kms_neg = np.concatenate((kms_normal, kms_noisy), axis=0)
+        merge_and_save(kms_pos, kms_neg, 'km')
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '-d', '--dataset',
-        help="Dataset to use; either 'mnist', 'cifar' or 'svhn'",
-        required=True, type=str
-    )
-    parser.add_argument(
-        '-a', '--attack',
-        help="Attack to use; either 'fgsm', 'jsma', 'bim-b', 'jsma', 'cw-l2' "
-             "or 'all'",
-        required=True, type=str
-    )
-    parser.add_argument(
-        '-r', '--characteristic',
-        help="Characteristic(s) to use 'kd', 'bu', 'lid' 'km' or 'all'",
-        required=True, type=str
-    )
-    parser.add_argument(
-        '-k', '--k_nearest',
-        help="The number of nearest neighbours to use; either 10, 20, 100 ",
-        required=False, type=int
-    )
-    parser.add_argument(
-        '-b', '--batch_size',
-        help="The batch size to use for training.",
-        required=False, type=int
-    )
-    parser.set_defaults(batch_size=100)
-    parser.set_defaults(k_nearest=20)
-    args = parser.parse_args()
-    main(args)
+    main()

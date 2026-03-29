@@ -9,6 +9,7 @@ from typing import List, Dict, Tuple
 # Base directories
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
+RESULTS_DIR = BASE_DIR / "results"
 OUTPUT_DIR = BASE_DIR / "visualizer" / "outputs"
 
 # MNIST-specific configuration
@@ -18,8 +19,32 @@ MNIST_CONFIG = {
     "image_shape": (28, 28),
     "channels": 1,
     "attack_params": {
-        "eps": 0.40,
+        "eps": 0.30,
         "eps_iter": 0.010
+    }
+}
+
+# Toy-specific configuration
+TOY_CONFIG = {
+    "dataset": "toy",
+    "num_classes": 2,
+    "image_shape": None,
+    "channels": None,
+    "attack_params": {
+        "eps": 0.2,
+        "eps_iter": 0.02
+    }
+}
+
+# CIFAR-specific configuration
+CIFAR_CONFIG = {
+    "dataset": "cifar",
+    "num_classes": 10,
+    "image_shape": (32, 32),
+    "channels": 3,
+    "attack_params": {
+        "eps": 0.03,
+        "eps_iter": 0.005
     }
 }
 
@@ -27,7 +52,7 @@ MNIST_CONFIG = {
 ATTACKS = ["fgsm", "bim-a", "bim-b", "jsma", "cw-l2", "cw-lid"]
 
 # Available characteristics
-CHARACTERISTICS = ["lid", "kd", "bu", "km"]
+CHARACTERISTICS = ["lid", "kd", "km"]
 
 # Visualization settings
 VISUALIZATION_CONFIG = {
@@ -64,8 +89,8 @@ PLOT_STYLES = {
 
 # File patterns
 FILE_PATTERNS = {
-    "adversarial": "Adv_{dataset}_{attack}.npy",
-    "characteristics": "{char}_{dataset}_{attack}.npy",
+    "adversarial": "adv_{attack}.npy",
+    "characteristics": "{char}_{attack}.npy",
     "model": "model_{dataset}.pth",
     "training_log": "training_{dataset}.log"
 }
@@ -91,7 +116,12 @@ PERFORMANCE = {
 def get_data_file_path(pattern: str, **kwargs) -> str:
     """Get full path for data file based on pattern"""
     filename = pattern.format(**kwargs)
-    return str(DATA_DIR / filename)
+    dataset = kwargs.get('dataset', 'mnist')
+    
+    if "model" in pattern:
+        return str(DATA_DIR / filename)
+    else:
+        return str(RESULTS_DIR / dataset / filename)
 
 def get_output_path(category: str, filename: str, create_dir: bool = True) -> str:
     """Get output path for visualization file"""
@@ -102,7 +132,7 @@ def get_output_path(category: str, filename: str, create_dir: bool = True) -> st
 
 def validate_dataset(dataset: str) -> bool:
     """Validate dataset name"""
-    return dataset.lower() in ["mnist", "cifar", "svhn"]
+    return dataset.lower() in ["mnist", "cifar", "svhn", "toy"]
 
 def validate_attack(attack: str) -> bool:
     """Validate attack name"""
@@ -111,6 +141,17 @@ def validate_attack(attack: str) -> bool:
 def validate_characteristic(char: str) -> bool:
     """Validate characteristic name"""
     return char.lower() in CHARACTERISTICS or char.lower() == "all"
+
+def get_dataset_config(dataset: str) -> Dict:
+    """Get configuration for specific dataset"""
+    if dataset == "mnist":
+        return MNIST_CONFIG
+    elif dataset == "toy":
+        return TOY_CONFIG
+    elif dataset == "cifar":
+        return CIFAR_CONFIG
+    else:
+        return {}
 
 # Default configuration for MNIST-only operation
 DEFAULT_CONFIG = {

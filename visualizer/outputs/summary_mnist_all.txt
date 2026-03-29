@@ -3,10 +3,14 @@ Adversarial ML Visualization Summary
 
 Dataset: mnist
 Mode: all
-Generated: 3 visualizations
+Generated: 7 visualizations
 
 ✓ SUCCESS: training_curves
 ✓ SUCCESS: confusion_matrix
 ✓ SUCCESS: roc_analysis
+✓ SUCCESS: persistence_model_analysis
+✓ SUCCESS: tda_comparison
+✓ SUCCESS: tda_clean_vs_adv
+✓ SUCCESS: correlation_model_analysis
 
 Output Directory: /mnt/e/lid_adversarial_subspace_detection/visualizer/outputs

@@ -51,7 +51,7 @@ Examples:
     
     # Mode selection
     parser.add_argument('--mode', '-m', 
-                       choices=['adversarial', 'model', 'detection', 'all', 'interactive'],
+                       choices=['adversarial', 'model', 'detection', 'tda', 'all', 'interactive'],
                        default='all',
                        help='Visualization mode to run')
     
@@ -104,9 +104,11 @@ def validate_arguments(args):
             raise ValueError(f"Invalid attack: {args.attack}")
     
     if args.characteristics:
-        for char in args.characteristics.split(','):
-            if not validate_characteristic(char):
-                raise ValueError(f"Invalid characteristic: {char}")
+        # In TDA mode, characteristics are actually model names, so we skip validation
+        if args.mode != 'tda':
+            for char in args.characteristics.split(','):
+                if not validate_characteristic(char):
+                    raise ValueError(f"Invalid characteristic: {char}")
 
 
 def check_data_availability(dataset: str, mode: str) -> Dict[str, bool]:
@@ -170,11 +172,14 @@ def get_what_to_generate(args, availability: Dict) -> List[str]:
             return ['training_curves', 'confusion_matrix', 'roc_analysis']
         elif args.mode == 'detection':
             return ['roc_comparison', '3d_features', 'probability_distributions', 'metrics_comparison']
+        elif args.mode == 'tda':
+            return ['persistence_diagram', 'tda_comparison', 'tda_clean_vs_adv', 'correlation_matrix']
         elif args.mode == 'all':
             return [
                 'image_grid', 'perturbation_analysis', 'attack_metrics',
                 'training_curves', 'confusion_matrix', 'roc_analysis',
-                'roc_comparison', '3d_features', 'probability_distributions', 'metrics_comparison'
+                'roc_comparison', '3d_features', 'probability_distributions', 'metrics_comparison',
+                'persistence_diagram', 'tda_comparison', 'tda_clean_vs_adv', 'correlation_matrix'
             ]
     
     # Parse specific what argument

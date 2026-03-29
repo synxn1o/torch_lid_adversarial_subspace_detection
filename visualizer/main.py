@@ -16,7 +16,7 @@ from visualizer.utils import (
     format_attack_list, filter_available_attacks, filter_available_characteristics
 )
 from visualizer.data_loaders import check_required_files
-from visualizer.visualizers import AdversarialVisualizer, ModelVisualizer, DetectionVisualizer
+from visualizer.visualizers import AdversarialVisualizer, ModelVisualizer, DetectionVisualizer, TDAVisualizer
 
 
 def run_adversarial_visualizations(dataset: str, attacks: List[str], what: List[str], 
@@ -138,6 +138,57 @@ def run_detection_visualizations(dataset: str, attacks: List[str], characteristi
     return results
 
 
+def run_tda_visualizations(dataset: str, what: List[str],
+                         visualizer: TDAVisualizer, names: List[str] = None) -> Dict[str, bool]:
+    """Run TDA visualizations"""
+    results = {}
+    
+    # Use provided names or default to 'model_analysis'
+    tda_names = names if names else ['model_analysis']
+    
+    if 'persistence_diagram' in what:
+        for name in tda_names:
+            print(f"  Generating persistence diagram for {name}...")
+            try:
+                visualizer.create_persistence_diagram(name, save=True)
+                results[f'persistence_{name}'] = True
+            except Exception as e:
+                print(f"    Error: {e}")
+                results[f'persistence_{name}'] = False
+    
+    if 'tda_comparison' in what:
+        print("  Generating TDA feature comparison...")
+        try:
+            visualizer.create_feature_comparison(tda_names, save=True)
+            results['tda_comparison'] = True
+        except Exception as e:
+            print(f"    Error: {e}")
+            results['tda_comparison'] = False
+    
+    if 'tda_clean_vs_adv' in what:
+        # Default to fgsm if not specified
+        attack = 'fgsm'
+        print(f"  Generating TDA clean vs {attack} comparison...")
+        try:
+            visualizer.create_clean_vs_adversarial_comparison(attack, save=True)
+            results['tda_clean_vs_adv'] = True
+        except Exception as e:
+            print(f"    Error: {e}")
+            results['tda_clean_vs_adv'] = False
+    
+    if 'correlation_matrix' in what:
+        for name in tda_names:
+            print(f"  Generating correlation matrix for {name}...")
+            try:
+                visualizer.create_correlation_matrix_plot(name, save=True)
+                results[f'correlation_{name}'] = True
+            except Exception as e:
+                print(f"    Error: {e}")
+                results[f'correlation_{name}'] = False
+            
+    return results
+
+
 def main():
     """Main entry point"""
     try:
@@ -183,7 +234,9 @@ def main():
                 characteristics = filter_available_characteristics(CHARACTERISTICS, availability)
             else:
                 characteristics = [c.strip() for c in args.characteristics.split(',')]
-                characteristics = filter_available_characteristics(characteristics, availability)
+                # Skip filtering for TDA mode as these are model names
+                if args.mode != 'tda':
+                    characteristics = filter_available_characteristics(characteristics, availability)
         else:
             characteristics = []
         
@@ -269,6 +322,22 @@ def main():
             else:
                 print("  No detection data available - skipping")
         
+        if args.mode == 'tda' or args.mode == 'all':
+            print(f"\n[TDA ANALYSIS]")
+            viz = TDAVisualizer(
+                dataset=args.dataset,
+                style='presentation',
+                dpi=args.dpi
+            )
+            # Check if user provided specific TDA names via --attack or --characteristics
+            # For TDA mode, we can repurpose --characteristics to take a list of model names
+            tda_names = None
+            if args.characteristics and args.characteristics != 'all':
+                tda_names = [c.strip() for c in args.characteristics.split(',')]
+            
+            results = run_tda_visualizations(args.dataset, what_to_generate, viz, names=tda_names)
+            all_results.update(results)
+
         # Interactive mode would be implemented here
         if args.mode == 'interactive':
             print("\n[INTERACTIVE MODE]")

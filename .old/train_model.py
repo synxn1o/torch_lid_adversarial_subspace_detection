@@ -1,87 +1,98 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
 import argparse
-from util import get_data, get_model, cross_entropy
-from keras.preprocessing.image import ImageDataGenerator
-import tensorflow as tf
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from util import get_data, get_model
+import os
+import time
 
-
-def train(dataset='mnist', batch_size=128, epochs=50):
-    """
-    Train one model with data augmentation: random padding+cropping and horizontal flip
-    :param args: 
-    :return: 
-    """
-    print('Data set: %s' % dataset)
-    X_train, Y_train, X_test, Y_test = get_data(dataset)
-    model = get_model(dataset)
-    model.compile(
-        loss='categorical_crossentropy',
-        optimizer='adadelta',
-        metrics=['accuracy']
-    )
+def train(dataset, batch_size, epochs):
+    print(f'Training on {dataset}...')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f'Using device: {device}')
     
-#     # training without data augmentation
-#     model.fit(
-#         X_train, Y_train,
-#         epochs=epochs,
-#         batch_size=batch_size,
-#         shuffle=True,
-#         verbose=1,
-#         validation_data=(X_test, Y_test)
-#     )
-
-    # training with data augmentation
-    # data augmentation
-    datagen = ImageDataGenerator(
-        rotation_range=20,
-        width_shift_range=0.2,
-        height_shift_range=0.2,
-        horizontal_flip=True)
+    # Get data with augmentation
+    train_loader, test_loader = get_data(dataset, batch_size=batch_size, augmentation=True)
     
-    model.fit_generator(
-        datagen.flow(X_train, Y_train, batch_size=batch_size),
-        steps_per_epoch=len(X_train) / batch_size,
-        epochs=epochs,
-        verbose=1,
-        validation_data=(X_test, Y_test))
+    # Get model
+    model = get_model(dataset).to(device)
+    
+    # Optimizer and Loss
+    # Keras Adadelta default rho=0.95, PyTorch is 0.9. 
+    # We'll use PyTorch default for now, but can adjust if needed.
+    optimizer = optim.Adadelta(model.parameters())
+    criterion = nn.CrossEntropyLoss()
+    
+    # Training Loop
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+        correct = 0
+        total = 0
+        
+        start_time = time.time()
+        
+        for i, (inputs, labels) in enumerate(train_loader):
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+            
+        train_acc = 100. * correct / total
+        train_loss = running_loss / len(train_loader)
+        
+        # Validation
+        model.eval()
+        test_loss = 0.0
+        test_correct = 0
+        test_total = 0
+        with torch.no_grad():
+            for inputs, labels in test_loader:
+                inputs, labels = inputs.to(device), labels.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                
+                test_loss += loss.item()
+                _, predicted = outputs.max(1)
+                test_total += labels.size(0)
+                test_correct += predicted.eq(labels).sum().item()
+        
+        test_acc = 100. * test_correct / test_total
+        test_loss = test_loss / len(test_loader)
+        
+        end_time = time.time()
+        print(f"Epoch [{epoch+1}/{epochs}] "
+              f"Time: {end_time - start_time:.1f}s "
+              f"Loss: {train_loss:.4f} Acc: {train_acc:.2f}% "
+              f"Val Loss: {test_loss:.4f} Val Acc: {test_acc:.2f}%")
+        
+    # Save model
+    if not os.path.exists('data'):
+        os.makedirs('data')
+    save_path = f'data/model_{dataset}.pth'
+    torch.save(model.state_dict(), save_path)
+    print(f"Model saved to {save_path}")
 
-    model.save('data/model_%s.h5' % dataset)
-
-def main(args):
-    """
-    Train model with data augmentation: random padding+cropping and horizontal flip
-    :param args: 
-    :return: 
-    """
-    assert args.dataset in ['mnist', 'cifar', 'svhn', 'all'], \
-        "dataset parameter must be either 'mnist', 'cifar', 'svhn' or all"
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--dataset', help="Dataset to use; either 'mnist', 'cifar', 'svhn' or 'all'", required=True, type=str)
+    parser.add_argument('-e', '--epochs', help="The number of epochs to train for.", default=120, type=int)
+    parser.add_argument('-b', '--batch_size', help="The batch size to use for training.", default=100, type=int)
+    args = parser.parse_args()
+    
     if args.dataset == 'all':
         for dataset in ['mnist', 'cifar', 'svhn']:
             train(dataset, args.batch_size, args.epochs)
     else:
         train(args.dataset, args.batch_size, args.epochs)
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '-d', '--dataset',
-        help="Dataset to use; either 'mnist', 'cifar', 'svhn' or 'all'",
-        required=True, type=str
-    )
-    parser.add_argument(
-        '-e', '--epochs',
-        help="The number of epochs to train for.",
-        required=False, type=int
-    )
-    parser.add_argument(
-        '-b', '--batch_size',
-        help="The batch size to use for training.",
-        required=False, type=int
-    )
-    parser.set_defaults(epochs=120)
-    parser.set_defaults(batch_size=100)
-    args = parser.parse_args()
-    main(args)
+    main()

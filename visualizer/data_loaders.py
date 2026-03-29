@@ -5,7 +5,7 @@ Data loaders for loading adversarial examples, characteristics, and original dat
 import os
 import numpy as np
 import torch
-from typing import Tuple, Dict, List, Optional, Union
+from typing import Tuple, Dict, List, Optional, Union, Any
 from pathlib import Path
 import sys
 
@@ -15,10 +15,11 @@ sys.path.append(str(Path(__file__).parent.parent))
 from visualizer.config import (
     get_data_file_path, 
     FILE_PATTERNS, 
-    MNIST_CONFIG,
-    VISUALIZATION_CONFIG
+    VISUALIZATION_CONFIG,
+    DATA_DIR
 )
-from util import get_data, get_model
+from core.data_loaders import get_dataloader, loader_to_numpy
+from core.models import get_model
 
 
 class DataLoaderError(Exception):
@@ -35,7 +36,7 @@ def load_original_data(
     Load original dataset (train or test)
     
     Args:
-        dataset: Dataset name (mnist, cifar, svhn)
+        dataset: Dataset name (mnist, cifar, svhn, toy)
         batch_size: Batch size for loader
         use_test_set: Whether to load test set (True) or train set (False)
     
@@ -43,10 +44,7 @@ def load_original_data(
         Tuple of (data_tensor, labels_tensor)
     """
     try:
-        if use_test_set:
-            _, data_loader = get_data(dataset, batch_size=batch_size, augmentation=False)
-        else:
-            data_loader, _ = get_data(dataset, batch_size=batch_size, augmentation=False)
+        data_loader = get_dataloader(dataset, batch_size=batch_size, train=not use_test_set)
         
         # Collect all data
         data_list = []
@@ -75,7 +73,7 @@ def load_original_data(
 def load_adversarial_data(
     dataset: str = "mnist",
     attack: str = "fgsm",
-    max_samples: int = None
+    max_samples: Optional[int] = None
 ) -> np.ndarray:
     """
     Load adversarial examples from file
@@ -113,14 +111,14 @@ def load_characteristics_data(
     dataset: str = "mnist",
     characteristic: str = "lid",
     attack: str = "fgsm",
-    max_samples: int = None
+    max_samples: Optional[int] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Load characteristics data with labels
     
     Args:
         dataset: Dataset name
-        characteristic: Characteristic type (lid, kd, bu, km)
+        characteristic: Characteristic type (lid, kd, km)
         attack: Attack name
         max_samples: Maximum samples to load
     
@@ -161,7 +159,7 @@ def load_characteristics_data(
 def load_model_predictions(
     dataset: str = "mnist",
     data_type: str = "original",
-    attack: str = None
+    attack: str = ""
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Load model predictions for given data
@@ -175,17 +173,18 @@ def load_model_predictions(
         Tuple of (predictions, probabilities, true_labels)
     """
     try:
-        # Load model
-        model = get_model(dataset)
-        model_path = str(Path(__file__).parent.parent / "data" / f"model_{dataset}.pth")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model_path = str(DATA_DIR / f"model_{dataset}.pth")
         
         if not os.path.exists(model_path):
-            raise DataLoaderError(f"Model file not found: {model_path}")
+            # Try alternative path for toy model
+            if dataset == 'toy':
+                model_path = str(Path(__file__).parent.parent / "toy_example" / "models" / "toy_binary_nn.pth")
+            
+            if not os.path.exists(model_path):
+                raise DataLoaderError(f"Model file not found: {model_path}")
         
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        model.to(device)
-        model.eval()
+        model = get_model(dataset, model_path=model_path, device=device)
         
         # Load data
         if data_type == "original":
@@ -197,13 +196,8 @@ def load_model_predictions(
             data_tensor = torch.from_numpy(adv_data).float()
             
             # Need true labels - load from original data
-            _, true_labels_loader = get_data(dataset, batch_size=100, augmentation=False)
-            true_labels_list = []
-            for _, labels in true_labels_loader:
-                true_labels_list.append(labels)
-                if len(true_labels_list) * 100 >= len(adv_data):
-                    break
-            true_labels = torch.cat(true_labels_list, dim=0)[:len(adv_data)]
+            _, true_labels = load_original_data(dataset, use_test_set=True)
+            true_labels = true_labels[:len(adv_data)]
         else:
             raise DataLoaderError(f"Unknown data type: {data_type}")
         
@@ -214,12 +208,18 @@ def load_model_predictions(
         with torch.no_grad():
             for i in range(0, len(data_tensor), 100):
                 batch = data_tensor[i:i+100].to(device)
-                outputs = model(batch)
-                probs = torch.softmax(outputs, dim=1)
+                logits = model.get_logits(batch)
                 
-                _, preds = outputs.max(1)
+                if model.is_binary:
+                    probs = torch.sigmoid(logits)
+                    # For binary, we want [prob_class0, prob_class1]
+                    probs = torch.cat([1-probs, probs], dim=1)
+                else:
+                    probs = torch.softmax(logits, dim=1)
                 
-                predictions.append(preds.cpu().numpy())
+                preds = model.predict(batch)
+                
+                predictions.append(preds)
                 probabilities.append(probs.cpu().numpy())
         
         predictions = np.concatenate(predictions, axis=0)
@@ -231,9 +231,9 @@ def load_model_predictions(
         raise DataLoaderError(f"Error loading model predictions: {e}")
 
 
-def load_training_metrics(dataset: str = "mnist") -> Dict[str, np.ndarray]:
+def load_training_metrics(dataset: str = "mnist") -> Dict[str, Any]:
     """
-    Load training metrics from console output
+    Load training metrics.
     Note: Since training metrics are in console output, this function
     will evaluate the model on test set to generate metrics
     
@@ -247,42 +247,53 @@ def load_training_metrics(dataset: str = "mnist") -> Dict[str, np.ndarray]:
         # Since we don't have saved training logs, we'll compute test metrics
         # and create synthetic training curves for demonstration
         
-        # Load model
-        model = get_model(dataset)
-        model_path = str(Path(__file__).parent.parent / "data" / f"model_{dataset}.pth")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model_path = str(DATA_DIR / f"model_{dataset}.pth")
         
         if not os.path.exists(model_path):
-            raise DataLoaderError(f"Model file not found: {model_path}")
+            # Try alternative path for toy model
+            if dataset == 'toy':
+                model_path = str(Path(__file__).parent.parent / "toy_example" / "models" / "toy_binary_nn.pth")
+            
+            if not os.path.exists(model_path):
+                raise DataLoaderError(f"Model file not found: {model_path}")
         
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        model.to(device)
-        model.eval()
+        model = get_model(dataset, model_path=model_path, device=device)
         
         # Evaluate on test set
-        _, test_loader = get_data(dataset, batch_size=100, augmentation=False)
+        test_loader = get_dataloader(dataset, batch_size=100, train=False)
         
         correct = 0
         total = 0
         all_preds = []
         all_true = []
+        all_probs = []
         
         with torch.no_grad():
             for inputs, labels in test_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                _, predicted = outputs.max(1)
+                logits = model.get_logits(inputs)
+                
+                if model.is_binary:
+                    probs = torch.sigmoid(logits)
+                    probs = torch.cat([1-probs, probs], dim=1)
+                else:
+                    probs = torch.softmax(logits, dim=1)
+                
+                preds = model.predict(inputs)
                 
                 total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
+                # For binary toy dataset, labels might be 0/1
+                correct += np.sum(preds == labels.cpu().numpy())
                 
-                all_preds.extend(predicted.cpu().numpy())
+                all_preds.extend(preds)
                 all_true.extend(labels.cpu().numpy())
+                all_probs.extend(probs.cpu().numpy())
         
         accuracy = correct / total
         
         # Create synthetic training curves (since we don't have logs)
-        # These are realistic curves based on typical MNIST training
+        # These are realistic curves based on typical training
         epochs = list(range(1, 21))  # 20 epochs
         train_loss = [2.3 - 0.1 * i + 0.01 * np.random.randn() for i in epochs]
         train_acc = [10 + 4 * i + 2 * np.random.randn() for i in epochs]
@@ -296,18 +307,23 @@ def load_training_metrics(dataset: str = "mnist") -> Dict[str, np.ndarray]:
         from sklearn.metrics import confusion_matrix
         cm = confusion_matrix(all_true, all_preds)
         
-        # ROC curve (for multi-class, one-vs-rest for first class)
+        # ROC curve
         from sklearn.metrics import roc_curve, auc
         from sklearn.preprocessing import label_binarize
         
-        y_binary = label_binarize(all_true, classes=list(range(10)))
+        num_classes = 2 if dataset == 'toy' else 10
+        y_binary = label_binarize(all_true, classes=list(range(num_classes)))
+        if num_classes == 2:
+            # label_binarize for 2 classes returns [n_samples, 1]
+            y_binary = np.hstack([1-y_binary, y_binary])
+
         fpr = dict()
         tpr = dict()
         roc_auc = dict()
         
-        for i in range(min(3, 10)):  # First 3 classes for visualization
-            fpr[i], tpr[i], _ = roc_curve(y_binary[:, i], 
-                                         [preds[i] for preds in all_preds])
+        all_probs = np.array(all_probs)
+        for i in range(min(3, num_classes)):  # First 3 classes for visualization
+            fpr[i], tpr[i], _ = roc_curve(y_binary[:, i], all_probs[:, i])
             roc_auc[i] = auc(fpr[i], tpr[i])
         
         return {
@@ -330,8 +346,8 @@ def load_training_metrics(dataset: str = "mnist") -> Dict[str, np.ndarray]:
 
 def load_all_characteristics(
     dataset: str = "mnist",
-    attacks: List[str] = None,
-    characteristics: List[str] = None
+    attacks: Optional[List[str]] = None,
+    characteristics: Optional[List[str]] = None
 ) -> Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray]]]:
     """
     Load all characteristics for multiple attacks
@@ -366,7 +382,7 @@ def load_all_characteristics(
     return data
 
 
-def check_required_files(dataset: str = "mnist") -> Dict[str, bool]:
+def check_required_files(dataset: str = "mnist") -> Dict[str, Any]:
     """
     Check which files are available for visualization
     
@@ -385,7 +401,10 @@ def check_required_files(dataset: str = "mnist") -> Dict[str, bool]:
     }
     
     # Check model
-    model_path = str(Path(__file__).parent.parent / "data" / f"model_{dataset}.pth")
+    model_path = str(DATA_DIR / f"model_{dataset}.pth")
+    if not os.path.exists(model_path) and dataset == 'toy':
+        model_path = str(Path(__file__).parent.parent / "toy_example" / "models" / "toy_binary_nn.pth")
+    
     results["model"] = os.path.exists(model_path)
     
     # Check adversarial examples

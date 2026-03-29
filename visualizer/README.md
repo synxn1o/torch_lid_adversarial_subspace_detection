@@ -5,6 +5,7 @@ A comprehensive visualization toolkit for adversarial machine learning research,
 1. **Original vs Adversarial Data**: Image comparisons, perturbation analysis, attack metrics
 2. **Model Performance**: Training curves, confusion matrices, ROC analysis
 3. **Adversarial Detection**: Multi-characteristic analysis, 3D feature spaces, probability distributions
+4. **Topological Analysis**: TDA-based Trojan detection, persistence diagrams, topological feature comparison
 
 ## Features
 
@@ -24,11 +25,15 @@ A comprehensive visualization toolkit for adversarial machine learning research,
 - **Probability Distributions**: Separation analysis of adversarial vs normal detection probabilities
 - **Metrics Comparison**: Comprehensive comparison of accuracy, precision, recall, and AUC
 
+### 4. Topological Analysis (TDA)
+- **Persistence Diagrams**: Visualization of 0, 1, and 2-dimensional topological structures
+- **Feature Comparison**: Comparison of topological characteristics (max persistence, avg death) across models
+
 ## Installation & Dependencies
 
 ### Required Packages
 ```bash
-pip install matplotlib seaborn scikit-learn torch pandas numpy
+pip install matplotlib seaborn scikit-learn torch pandas numpy ripser
 # Optional for interactive plots:
 pip install plotly
 ```
@@ -51,6 +56,7 @@ python -m visualizer.main --mode all --dataset mnist
 python -m visualizer.main --mode adversarial --dataset mnist --attack fgsm
 python -m visualizer.main --mode model --dataset mnist
 python -m visualizer.main --mode detection --dataset mnist --attack all
+python -m visualizer.main --mode tda --dataset mnist
 
 # Specify output directory
 python -m visualizer.main --mode all --dataset mnist --output-dir ./my_plots
@@ -62,7 +68,7 @@ python -m visualizer.main --mode all --dataset mnist --format pdf --dpi 600
 ### Command Line Arguments
 
 #### Mode Selection
-- `--mode {adversarial, model, detection, all, interactive}`
+- `--mode {adversarial, model, detection, tda, all, interactive}`
 - Default: `all`
 
 #### Data Selection
@@ -107,6 +113,30 @@ python -m visualizer.main --mode adversarial --dataset mnist --attack fgsm,bim-a
 ```bash
 python -m visualizer.main --mode detection --dataset mnist --characteristics lid,kd --attack all
 ```
+
+#### TDA Analysis
+```bash
+# Run TDA detector first
+python tda_detector.py --dataset mnist --name my_model
+
+# Visualize results
+python -m visualizer.main --mode tda --dataset mnist
+```
+
+#### Comparing Multiple Models with TDA
+To compare a clean model with a poisoned model:
+1. Run TDA on the clean model:
+   ```bash
+   python tda_detector.py --dataset mnist --name clean
+   ```
+2. Run TDA on the poisoned model:
+   ```bash
+   python tda_detector.py --dataset mnist --model_path data/model_mnist_poisoned.pth --name poisoned
+   ```
+3. Visualize the comparison:
+   ```bash
+   python -m visualizer.main --mode tda --dataset mnist --characteristics clean,poisoned
+   ```
 
 #### Custom Visualizations
 ```bash
