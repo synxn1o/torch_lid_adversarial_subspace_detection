@@ -66,7 +66,9 @@ def get_noisy_samples(X, dataset_name, attack_name=None, std=None):
         STDEVS = {
             'mnist': {'fgsm': 0.264, 'bim-a': 0.111, 'bim-b': 0.184, 'cw-l2': 0.588},
             'cifar': {'fgsm': 0.0504, 'bim-a': 0.0087, 'bim-b': 0.0439, 'cw-l2': 0.015},
+            'cifar100': {'fgsm': 0.05, 'bim-a': 0.008, 'bim-b': 0.04, 'cw-l2': 0.015},
             'svhn': {'fgsm': 0.1332, 'bim-a': 0.015, 'bim-b': 0.1024, 'cw-l2': 0.0379},
+            'fashion_mnist': {'fgsm': 0.25, 'bim-a': 0.1, 'bim-b': 0.18, 'cw-l2': 0.5},
             'toy': 0.2
         }
         if dataset_name == 'toy':
@@ -93,20 +95,19 @@ def lid_adv_term(clean_logits, adv_logits, k=20):
     batch_size = clean_logits.size(0)
     c_pred = clean_logits.view(batch_size, -1)
     a_pred = adv_logits.view(batch_size, -1)
-    
+
     r_a = torch.sum(a_pred**2, dim=1).view(-1, 1)
     r_c = torch.sum(c_pred**2, dim=1).view(1, -1)
-    
+
     D = r_a - 2 * torch.matmul(a_pred, c_pred.t()) + r_c
     D1 = torch.sqrt(D + 1e-9)
-    
-    # k+1 because topk includes self if c_pred == a_pred, 
-    # but here they are different. However, to be safe and consistent:
-    D2, _ = torch.topk(-D1, k=k+1, sorted=True)
+
+    k_use = min(k, batch_size - 1)
+    D2, _ = torch.topk(-D1, k=k_use+1, sorted=True)
     D3 = -D2[:, 1:]
-    
-    m = D3 / D3[:, -1].view(-1, 1)
+
+    m = D3 / (D3[:, -1].view(-1, 1) + 1e-9)
     v_log = torch.sum(torch.log(m + 1e-9), dim=1)
-    lids = -k / v_log
-    
+    lids = -k_use / v_log
+
     return lids

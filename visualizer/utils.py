@@ -71,7 +71,10 @@ Examples:
     # Output options
     parser.add_argument('--output-dir', '-o',
                        help='Output directory for visualizations')
-    
+
+    parser.add_argument('--data-dir',
+                       help='Data directory for loading experiment results (e.g., results/apr11)')
+
     parser.add_argument('--format', '-f',
                        choices=OUTPUT_FORMATS,
                        default='png',

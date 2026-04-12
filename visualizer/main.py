@@ -9,7 +9,7 @@ from typing import List, Dict
 # Add parent directory to path to allow imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from visualizer.config import DEFAULT_CONFIG, ATTACKS, CHARACTERISTICS
+from visualizer.config import DEFAULT_CONFIG, ATTACKS, CHARACTERISTICS, OUTPUT_DIR
 from visualizer.utils import (
     parse_arguments, validate_arguments, print_banner, check_data_availability,
     print_data_status, get_what_to_generate, create_summary_report, ensure_dependencies,
@@ -201,6 +201,11 @@ def main():
         # Setup environment
         from visualizer.utils import setup_environment
         setup_environment()
+
+        # Apply data-dir override if provided
+        if args.data_dir:
+            import visualizer.config as cfg
+            cfg.RESULTS_DIR = Path(args.data_dir)
         
         # Check dependencies
         ensure_dependencies()
@@ -268,10 +273,9 @@ def main():
         print_data_status(args.dataset)
         
         # Initialize output directory
-        if args.output_dir:
-            from visualizer.config import OUTPUT_DIR
-            OUTPUT_DIR = Path(args.output_dir)
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_dir = Path(args.output_dir) if args.output_dir else None
+        if output_dir:
+            output_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize results dictionary
         all_results = {}
@@ -288,7 +292,8 @@ def main():
                 viz = AdversarialVisualizer(
                     dataset=args.dataset,
                     style='presentation',
-                    dpi=args.dpi
+                    dpi=args.dpi,
+                    output_dir=str(output_dir) if output_dir else None
                 )
                 results = run_adversarial_visualizations(args.dataset, attacks, what_to_generate, viz)
                 all_results.update(results)
@@ -300,7 +305,8 @@ def main():
             viz = ModelVisualizer(
                 dataset=args.dataset,
                 style='presentation',
-                dpi=args.dpi
+                dpi=args.dpi,
+                output_dir=str(output_dir) if output_dir else None
             )
             results = run_model_visualizations(args.dataset, what_to_generate, viz)
             all_results.update(results)
@@ -313,7 +319,8 @@ def main():
                 viz = DetectionVisualizer(
                     dataset=args.dataset,
                     style='presentation',
-                    dpi=args.dpi
+                    dpi=args.dpi,
+                    output_dir=str(output_dir) if output_dir else None
                 )
                 results = run_detection_visualizations(
                     args.dataset, attacks, characteristics, what_to_generate, viz
@@ -327,7 +334,8 @@ def main():
             viz = TDAVisualizer(
                 dataset=args.dataset,
                 style='presentation',
-                dpi=args.dpi
+                dpi=args.dpi,
+                output_dir=str(output_dir) if output_dir else None
             )
             # Check if user provided specific TDA names via --attack or --characteristics
             # For TDA mode, we can repurpose --characteristics to take a list of model names
@@ -356,9 +364,9 @@ def main():
         print(f"Generated {successful}/{total} visualizations")
         
         if successful > 0:
-            from visualizer.config import OUTPUT_DIR
-            create_summary_report(all_results, args.dataset, args.mode, str(OUTPUT_DIR))
-            print(f"\nVisualizations saved to: {OUTPUT_DIR}")
+            summary_dir = str(output_dir) if output_dir else str(OUTPUT_DIR)
+            create_summary_report(all_results, args.dataset, args.mode, summary_dir)
+            print(f"\nVisualizations saved to: {summary_dir}")
         
         return 0 if successful > 0 else 1
         

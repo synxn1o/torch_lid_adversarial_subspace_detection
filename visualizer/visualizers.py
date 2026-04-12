@@ -19,10 +19,11 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 
 from visualizer.config import (
-    get_output_path, 
-    PLOT_STYLES, 
+    get_output_path,
+    PLOT_STYLES,
     VISUALIZATION_CONFIG,
-    get_dataset_config
+    get_dataset_config,
+    RESULTS_DIR
 )
 from visualizer.data_loaders import (
     load_original_data,
@@ -42,7 +43,7 @@ class BaseVisualizer:
         self.dataset = dataset
         self.style = style
         self.dpi = dpi
-        self.output_dir = output_dir or get_output_path("general", "", create_dir=True)
+        self.output_dir = Path(output_dir) if output_dir else None
         self.config = get_dataset_config(dataset)
         
         # Setup plot style
@@ -68,10 +69,8 @@ class BaseVisualizer:
     
     def save_figure(self, fig, filename: str, subdir: Optional[str] = None):
         """Save figure to output directory"""
-        if subdir:
-            output_path = get_output_path(subdir, filename, create_dir=True)
-        else:
-            output_path = get_output_path("general", filename, create_dir=True)
+        cat = subdir if subdir else "general"
+        output_path = get_output_path(cat, filename, create_dir=True, base_dir=self.output_dir)
         
         fig.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
         print(f"Saved: {output_path}")
@@ -803,13 +802,12 @@ class TDAVisualizer(BaseVisualizer):
         """
         try:
             import json
-            from pathlib import Path
-            
+
             # Load TDA data
-            tda_path = Path(f"results/tda/tda_{self.dataset}.json")
+            tda_path = RESULTS_DIR / "tda" / f"tda_{self.dataset}.json"
             if not tda_path.exists():
                 # Try alternative naming
-                tda_path = Path(f"results/tda/{name}_{self.dataset}.json")
+                tda_path = RESULTS_DIR / "tda" / f"{name}_{self.dataset}.json"
                 
             if not tda_path.exists():
                 print(f"TDA data not found at {tda_path}")
@@ -870,11 +868,10 @@ class TDAVisualizer(BaseVisualizer):
         """
         try:
             import json
-            from pathlib import Path
-            
+
             all_features = []
             for name in names:
-                tda_path = Path(f"data/tda/{name}_{self.dataset}.json")
+                tda_path = RESULTS_DIR / "tda" / f"{name}_{self.dataset}.json"
                 if tda_path.exists():
                     with open(tda_path, 'r') as f:
                         data = json.load(f)
@@ -921,11 +918,10 @@ class TDAVisualizer(BaseVisualizer):
         """
         try:
             import json
-            from pathlib import Path
-            
+
             # Load TDA data
-            clean_path = Path(f"data/tda/clean_{self.dataset}.json")
-            adv_path = Path(f"data/tda/{attack}_{self.dataset}.json")
+            clean_path = RESULTS_DIR / "tda" / f"clean_{self.dataset}.json"
+            adv_path = RESULTS_DIR / "tda" / f"{attack}_{self.dataset}.json"
             
             if not clean_path.exists() or not adv_path.exists():
                 print(f"TDA data not found. Clean: {clean_path.exists()}, Adv: {adv_path.exists()}")
@@ -1026,13 +1022,12 @@ class TDAVisualizer(BaseVisualizer):
         """
         try:
             import json
-            from pathlib import Path
-            
+
             # Load TDA data
-            tda_path = Path(f"results/tda/tda_{self.dataset}.json")
+            tda_path = RESULTS_DIR / "tda" / f"tda_{self.dataset}.json"
             if not tda_path.exists():
                 # Try alternative naming
-                tda_path = Path(f"results/tda/{name}_{self.dataset}.json")
+                tda_path = RESULTS_DIR / "tda" / f"{name}_{self.dataset}.json"
                 
             if not tda_path.exists():
                 print(f"TDA data not found at {tda_path}")

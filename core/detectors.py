@@ -89,7 +89,7 @@ class KDDetector(BaseDetector):
         classes = np.unique(Y_train)
         
         # Default bandwidths from original code
-        BANDWIDTHS = {'mnist': 3.7926, 'cifar': 0.26, 'svhn': 1.00, 'toy': 0.2}
+        BANDWIDTHS = {'mnist': 3.7926, 'cifar': 0.26, 'cifar100': 0.25, 'svhn': 1.00, 'fashion_mnist': 3.5, 'toy': 0.2}
         bw = self.bandwidth or BANDWIDTHS.get(self.model_wrapper.dataset_name, 0.1)
         
         # Use only the penultimate layer for KD (as in original code)
@@ -229,12 +229,23 @@ class TDADetector(BaseDetector):
         for dim, dgm in enumerate(dgms):
             if len(dgm) == 0:
                 features[f'dim{dim}_max_persistence'] = 0.0
+                features[f'dim{dim}_num_points'] = 0.0
+                features[f'dim{dim}_avg_birth'] = 0.0
+                features[f'dim{dim}_avg_death'] = 0.0
+                features[f'dim{dim}_avg_persistence'] = 0.0
                 continue
             finite_dgm = dgm[np.isfinite(dgm[:, 1])]
             if len(finite_dgm) == 0:
                 features[f'dim{dim}_max_persistence'] = 0.0
+                features[f'dim{dim}_num_points'] = 0.0
+                features[f'dim{dim}_avg_birth'] = 0.0
+                features[f'dim{dim}_avg_death'] = 0.0
+                features[f'dim{dim}_avg_persistence'] = 0.0
                 continue
             persistences = finite_dgm[:, 1] - finite_dgm[:, 0]
             features[f'dim{dim}_max_persistence'] = float(np.max(persistences))
             features[f'dim{dim}_num_points'] = float(len(finite_dgm))
+            features[f'dim{dim}_avg_birth'] = float(np.mean(finite_dgm[:, 0]))
+            features[f'dim{dim}_avg_death'] = float(np.mean(finite_dgm[:, 1]))
+            features[f'dim{dim}_avg_persistence'] = float(np.mean(persistences))
         return features

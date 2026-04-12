@@ -16,7 +16,9 @@ from visualizer.config import (
     get_data_file_path, 
     FILE_PATTERNS, 
     VISUALIZATION_CONFIG,
-    DATA_DIR
+    DATA_DIR,
+    ADV_DIR,
+    ANALYSIS_DIR
 )
 from core.data_loaders import get_dataloader, loader_to_numpy
 from core.models import get_model
@@ -175,17 +177,17 @@ def load_model_predictions(
     try:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model_path = str(DATA_DIR / f"model_{dataset}.pth")
-        
+
         if not os.path.exists(model_path):
             # Try alternative path for toy model
             if dataset == 'toy':
-                model_path = str(Path(__file__).parent.parent / "toy_example" / "models" / "toy_binary_nn.pth")
-            
+                model_path = str(DATA_DIR / "model_toy.pth")
+
             if not os.path.exists(model_path):
                 raise DataLoaderError(f"Model file not found: {model_path}")
-        
+
         model = get_model(dataset, model_path=model_path, device=device)
-        
+
         # Load data
         if data_type == "original":
             data_tensor, true_labels = load_original_data(dataset, use_test_set=True)
@@ -249,17 +251,17 @@ def load_training_metrics(dataset: str = "mnist") -> Dict[str, Any]:
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model_path = str(DATA_DIR / f"model_{dataset}.pth")
-        
+
         if not os.path.exists(model_path):
             # Try alternative path for toy model
             if dataset == 'toy':
-                model_path = str(Path(__file__).parent.parent / "toy_example" / "models" / "toy_binary_nn.pth")
-            
+                model_path = str(DATA_DIR / "model_toy.pth")
+
             if not os.path.exists(model_path):
                 raise DataLoaderError(f"Model file not found: {model_path}")
-        
+
         model = get_model(dataset, model_path=model_path, device=device)
-        
+
         # Evaluate on test set
         test_loader = get_dataloader(dataset, batch_size=100, train=False)
         
@@ -403,8 +405,8 @@ def check_required_files(dataset: str = "mnist") -> Dict[str, Any]:
     # Check model
     model_path = str(DATA_DIR / f"model_{dataset}.pth")
     if not os.path.exists(model_path) and dataset == 'toy':
-        model_path = str(Path(__file__).parent.parent / "toy_example" / "models" / "toy_binary_nn.pth")
-    
+        model_path = str(DATA_DIR / "model_toy.pth")
+
     results["model"] = os.path.exists(model_path)
     
     # Check adversarial examples

@@ -3,6 +3,6 @@ data/
 .gemini/
 __pycache__/
 models/
-
+pyrightconfig.json
 .pkl
 .npy

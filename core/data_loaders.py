@@ -1,12 +1,4 @@
-"""Unified data loading for all supported datasets.
-
-Provides a single interface for loading MNIST, CIFAR-10, SVHN, and Toy (2D binary)
-datasets with consistent normalization (to [-0.5, 0.5]) and optional augmentation.
-
-Functions:
-    get_dataloader — Returns a PyTorch DataLoader for the specified dataset
-    loader_to_numpy — Converts a DataLoader to (X, y) numpy arrays
-"""
+"""Unified data loading for all supported datasets."""
 
 import torch
 import torchvision
@@ -16,21 +8,22 @@ import numpy as np
 import pickle
 import os
 
-def get_dataloader(dataset_name, batch_size=128, train=True, download=True, augmentation=False):
+from core.config import get_dataloader_root, get_toy_dataset_path
+
+def get_dataloader(dataset_name, batch_size=128, train=True, download=True, augmentation=False, data_dir=None):
     """
     Unified data loader for all supported datasets.
     """
-    if dataset_name in ['mnist', 'cifar', 'svhn']:
-        # Base transforms
+    root = data_dir or str(get_dataloader_root())
+
+    if dataset_name in ['mnist', 'cifar', 'svhn', 'cifar100', 'fashion_mnist']:
         base_transform_list = [transforms.ToTensor()]
-        
-        # Normalization to [-0.5, 0.5]
-        if dataset_name == 'cifar':
+
+        if dataset_name in ['cifar', 'cifar100']:
             normalize = transforms.Normalize((0.5, 0.5, 0.5), (1.0, 1.0, 1.0))
         else:
             normalize = transforms.Normalize((0.5,), (1.0,))
 
-        # Augmentation
         transform_list = []
         if train and augmentation:
             transform_list.extend([
@@ -38,24 +31,26 @@ def get_dataloader(dataset_name, batch_size=128, train=True, download=True, augm
                 transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
                 transforms.RandomHorizontalFlip()
             ])
-        
+
         transform = transforms.Compose(transform_list + base_transform_list + [normalize])
 
         if dataset_name == 'mnist':
-            dataset = torchvision.datasets.MNIST(root='./data', train=train, download=download, transform=transform)
+            dataset = torchvision.datasets.MNIST(root=root, train=train, download=download, transform=transform)
         elif dataset_name == 'cifar':
-            dataset = torchvision.datasets.CIFAR10(root='./data', train=train, download=download, transform=transform)
+            dataset = torchvision.datasets.CIFAR10(root=root, train=train, download=download, transform=transform)
+        elif dataset_name == 'cifar100':
+            dataset = torchvision.datasets.CIFAR100(root=root, train=train, download=download, transform=transform)
         elif dataset_name == 'svhn':
             split = 'train' if train else 'test'
-            dataset = torchvision.datasets.SVHN(root='./data', split=split, download=download, transform=transform)
+            dataset = torchvision.datasets.SVHN(root=root, split=split, download=download, transform=transform)
+        elif dataset_name == 'fashion_mnist':
+            dataset = torchvision.datasets.FashionMNIST(root=root, train=train, download=download, transform=transform)
             
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=train, num_workers=2)
         return loader
 
     elif dataset_name == 'toy':
-        # For toy dataset, we expect a pickle file
-        # We'll use the circle dataset by default if it exists
-        data_path = "toy_example/data/circle_dataset.pkl"
+        data_path = str(get_toy_dataset_path()) if data_dir is None else os.path.join(data_dir, "toy", "circle_dataset.pkl")
         if not os.path.exists(data_path):
             raise FileNotFoundError(f"Toy dataset not found at {data_path}. Run toy_example/generate_dataset.py first.")
             

@@ -17,7 +17,6 @@ PyTorch implementation of ICLR 2018 paper "Characterizing Adversarial Subspaces 
 ├── core/                   # Library: attacks, detectors, models, data loaders
 ├── visualizer/             # Visualization toolkit (adversarial, model, detection, TDA)
 ├── experiments/            # End-to-end pipelines: run_mnist, run_toy, run_tda
-├── .old/                   # LEGACY TensorFlow code - DO NOT EDIT
 ├── data/                   # Model weights (.pth), generated data (.npy)
 ├── results/                # Experiment outputs (mnist/, toy/, tda/)
 ├── plans/                  # Refactoring plans (reference only)
@@ -51,13 +50,11 @@ PyTorch implementation of ICLR 2018 paper "Characterizing Adversarial Subspaces 
 
 - **sys.path hacks**: Entry points use `sys.path.append` (no `setup.py` exists)
 - **No requirements.txt**: Dependencies listed in README only
-- **No test suite**: `.old/` has legacy tests, active codebase has none
 - **Data format**: `.npy` files with last column = label (1=adversarial, 0=clean)
 - **Model format**: `.pth` PyTorch state dicts
 
 ## ANTI-PATTERNS (THIS PROJECT)
 
-- **DO NOT** use `.old/` code (legacy TensorFlow, not maintained)
 - **DO NOT** add bare `except Exception` handlers (34+ instances in visualizer)
 - **NEVER** assume `y_target` is pre-set in attacks (validate first)
 - **ALWAYS** check `ripser` availability before using `TDADetector`

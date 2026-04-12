@@ -312,9 +312,10 @@ class CarliniL2(BaseAttack):
                     
                     success = (preds == y_target_np)
                     mask = (l2dist < bestl2) & torch.from_numpy(success).to(self.device)
+                    mask_np = mask.cpu().numpy()
                     bestl2[mask] = l2dist[mask]
-                    bestscore[mask] = torch.from_numpy(preds[mask]).to(self.device)
-                    
+                    bestscore[mask] = torch.from_numpy(preds[mask_np]).to(self.device)
+
                     mask_global = (l2dist < o_bestl2) & torch.from_numpy(success).to(self.device)
                     o_bestl2[mask_global] = l2dist[mask_global]
                     o_bestattack[mask_global] = newimg[mask_global]

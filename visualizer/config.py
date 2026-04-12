@@ -4,13 +4,16 @@ Configuration settings for the visualization utility
 
 import os
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
+
+from core.config import DATA_DIR
 
 # Base directories
 BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
 RESULTS_DIR = BASE_DIR / "results"
 OUTPUT_DIR = BASE_DIR / "visualizer" / "outputs"
+ADV_DIR = BASE_DIR / "experiments" / "adversarial_data"
+ANALYSIS_DIR = BASE_DIR / "experiments" / "analysis_data"
 
 # MNIST-specific configuration
 MNIST_CONFIG = {
@@ -52,7 +55,7 @@ CIFAR_CONFIG = {
 ATTACKS = ["fgsm", "bim-a", "bim-b", "jsma", "cw-l2", "cw-lid"]
 
 # Available characteristics
-CHARACTERISTICS = ["lid", "kd", "km"]
+CHARACTERISTICS = ["lid", "kd", "km", "tda"]
 
 # Visualization settings
 VISUALIZATION_CONFIG = {
@@ -120,12 +123,15 @@ def get_data_file_path(pattern: str, **kwargs) -> str:
     
     if "model" in pattern:
         return str(DATA_DIR / filename)
+    elif "adv_" in pattern:
+        return str(ADV_DIR / dataset / filename)
     else:
-        return str(RESULTS_DIR / dataset / filename)
+        return str(ANALYSIS_DIR / dataset / filename)
 
-def get_output_path(category: str, filename: str, create_dir: bool = True) -> str:
+def get_output_path(category: str, filename: str, create_dir: bool = True, base_dir: Optional[Path] = None) -> str:
     """Get output path for visualization file"""
-    output_subdir = OUTPUT_DIR / category
+    root = base_dir if base_dir is not None else OUTPUT_DIR
+    output_subdir = root / category
     if create_dir:
         output_subdir.mkdir(parents=True, exist_ok=True)
     return str(output_subdir / filename)

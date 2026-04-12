@@ -138,6 +138,60 @@ class SVHNModel(nn.Module):
         x = self.fc3(x)
         return x
 
+class CIFAR100Model(nn.Module):
+    def __init__(self):
+        super(CIFAR100Model, self).__init__()
+        self.conv1 = nn.Conv2d(3, 32, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 32, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.pool1 = nn.MaxPool2d(2, 2)
+        self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.conv4 = nn.Conv2d(64, 64, 3, padding=1)
+        self.bn4 = nn.BatchNorm2d(64)
+        self.pool2 = nn.MaxPool2d(2, 2)
+        self.conv5 = nn.Conv2d(64, 128, 3, padding=1)
+        self.bn5 = nn.BatchNorm2d(128)
+        self.conv6 = nn.Conv2d(128, 128, 3, padding=1)
+        self.bn6 = nn.BatchNorm2d(128)
+        self.pool3 = nn.MaxPool2d(2, 2)
+        self.dropout1 = nn.Dropout(0.5)
+        self.fc1 = nn.Linear(128 * 4 * 4, 1024)
+        self.bn7 = nn.BatchNorm1d(1024)
+        self.dropout2 = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(1024, 512)
+        self.bn8 = nn.BatchNorm1d(512)
+        self.dropout3 = nn.Dropout(0.5)
+        self.fc3 = nn.Linear(512, 100)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = self.bn1(x)
+        x = F.relu(self.conv2(x))
+        x = self.bn2(x)
+        x = self.pool1(x)
+        x = F.relu(self.conv3(x))
+        x = self.bn3(x)
+        x = F.relu(self.conv4(x))
+        x = self.bn4(x)
+        x = self.pool2(x)
+        x = F.relu(self.conv5(x))
+        x = self.bn5(x)
+        x = F.relu(self.conv6(x))
+        x = self.bn6(x)
+        x = self.pool3(x)
+        x = x.view(x.size(0), -1)
+        x = self.dropout1(x)
+        x = F.relu(self.fc1(x))
+        x = self.bn7(x)
+        x = self.dropout2(x)
+        x = F.relu(self.fc2(x))
+        x = self.bn8(x)
+        x = self.dropout3(x)
+        x = self.fc3(x)
+        return x
+
 class ToyModel(nn.Module):
     def __init__(self, input_dim=2, hidden_dim=4):
         super(ToyModel, self).__init__()
@@ -167,7 +221,10 @@ class ModelWrapper:
         self._register_hooks()
 
     def _register_hooks(self):
+        self._hooks_enabled = True
         def hook_fn(module, input, output):
+            if not self._hooks_enabled:
+                return
             out = output
             if out.dim() > 2:
                 # Use Global Average Pooling for convolutional layers to keep dimensionality manageable
@@ -183,7 +240,15 @@ class ModelWrapper:
                 if isinstance(module, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.BatchNorm1d, nn.MaxPool2d)):
                     self.hooks.append(module.register_forward_hook(hook_fn))
 
+    def disable_hooks(self):
+        self._hooks_enabled = False
+        self.features = []
+
+    def enable_hooks(self):
+        self._hooks_enabled = True
+
     def get_logits(self, x):
+        self.features = []
         if isinstance(x, torch.Tensor):
             x = x.to(self.device).float()
         else:
@@ -191,24 +256,25 @@ class ModelWrapper:
         return self.model(x)
 
     def predict(self, x):
-        logits = self.get_logits(x)
-        if self.is_binary:
-            return (torch.sigmoid(logits) > 0.5).long().cpu().numpy().flatten()
-        else:
-            return torch.argmax(logits, dim=1).cpu().numpy()
+        with torch.no_grad():
+            logits = self.get_logits(x)
+            if self.is_binary:
+                return (torch.sigmoid(logits) > 0.5).long().cpu().numpy().flatten()
+            else:
+                return torch.argmax(logits, dim=1).cpu().numpy()
 
     def get_features(self, x):
-        self.features = [] # Reset
-        logits = self.get_logits(x)
-        # Include input as a feature?
-        # Original code often includes input.
-        # Let's prepend it.
-        if isinstance(x, torch.Tensor):
-            inp = x.view(x.size(0), -1).detach()
-        else:
-            inp = torch.from_numpy(x).view(len(x), -1).to(self.device).detach()
-            
-        return [inp] + [f.detach() for f in self.features]
+        with torch.no_grad():
+            logits = self.get_logits(x)
+            # Include input as a feature?
+            # Original code often includes input.
+            # Let's prepend it.
+            if isinstance(x, torch.Tensor):
+                inp = x.view(x.size(0), -1).detach()
+            else:
+                inp = torch.from_numpy(x).view(len(x), -1).to(self.device).detach()
+
+            return [inp] + [f.detach() for f in self.features]
 
     def __call__(self, x):
         return self.get_logits(x)
@@ -218,8 +284,13 @@ def get_model(dataset_name, model_path=None, device='cpu'):
         model = MNISTModel()
     elif dataset_name == 'cifar':
         model = CIFARModel()
+    elif dataset_name == 'cifar100':
+        model = CIFAR100Model()
     elif dataset_name == 'svhn':
         model = SVHNModel()
+    elif dataset_name == 'fashion_mnist':
+        # Fashion-MNIST has same shape as MNIST (1ch, 28x28, 10cls)
+        model = MNISTModel()
     elif dataset_name == 'toy':
         model = ToyModel()
     else:
