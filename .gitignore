@@ -6,3 +6,4 @@ models/
 pyrightconfig.json
 .pkl
 .npy
+experiments/
