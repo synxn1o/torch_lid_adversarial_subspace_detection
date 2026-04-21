@@ -138,7 +138,7 @@ def get_output_path(category: str, filename: str, create_dir: bool = True, base_
 
 def validate_dataset(dataset: str) -> bool:
     """Validate dataset name"""
-    return dataset.lower() in ["mnist", "cifar", "svhn", "toy"]
+    return dataset.lower() in ["mnist", "cifar", "svhn", "fashion_mnist", "toy"]
 
 def validate_attack(attack: str) -> bool:
     """Validate attack name"""

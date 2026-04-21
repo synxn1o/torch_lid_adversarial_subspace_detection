@@ -13,7 +13,7 @@ FILE_PATTERNS = {
     "adversarial":    "adv_{attack}.npy",
     "noisy":          "Noisy_{dataset}_{attack}.npy",
     "characteristic": "{char}_{dataset}_{attack}.npy",
-    "tda":            "tda_{dataset}.json",
+    "tda":            "tda_{dataset}_{attack}.json",
 }
 
 

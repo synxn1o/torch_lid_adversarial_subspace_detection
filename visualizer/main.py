@@ -4,7 +4,7 @@ Main CLI interface for the visualization utility
 
 import sys
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 # Add parent directory to path to allow imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -139,35 +139,33 @@ def run_detection_visualizations(dataset: str, attacks: List[str], characteristi
 
 
 def run_tda_visualizations(dataset: str, what: List[str],
-                         visualizer: TDAVisualizer, names: List[str] = None) -> Dict[str, bool]:
+                         visualizer: TDAVisualizer, attacks: Optional[List[str]] = None) -> Dict[str, bool]:
     """Run TDA visualizations"""
     results = {}
     
-    # Use provided names or default to 'model_analysis'
-    tda_names = names if names else ['model_analysis']
+    tda_attacks = attacks if attacks else ['clean']
     
     if 'persistence_diagram' in what:
-        for name in tda_names:
-            print(f"  Generating persistence diagram for {name}...")
+        for attack in tda_attacks:
+            print(f"  Generating persistence diagram for {attack}...")
             try:
-                visualizer.create_persistence_diagram(name, save=True)
-                results[f'persistence_{name}'] = True
+                visualizer.create_persistence_diagram(attack, save=True)
+                results[f'persistence_{attack}'] = True
             except Exception as e:
                 print(f"    Error: {e}")
-                results[f'persistence_{name}'] = False
+                results[f'persistence_{attack}'] = False
     
     if 'tda_comparison' in what:
         print("  Generating TDA feature comparison...")
         try:
-            visualizer.create_feature_comparison(tda_names, save=True)
+            visualizer.create_feature_comparison(tda_attacks, save=True)
             results['tda_comparison'] = True
         except Exception as e:
             print(f"    Error: {e}")
             results['tda_comparison'] = False
     
     if 'tda_clean_vs_adv' in what:
-        # Default to fgsm if not specified
-        attack = 'fgsm'
+        attack = tda_attacks[0] if tda_attacks else 'fgsm'
         print(f"  Generating TDA clean vs {attack} comparison...")
         try:
             visualizer.create_clean_vs_adversarial_comparison(attack, save=True)
@@ -177,14 +175,14 @@ def run_tda_visualizations(dataset: str, what: List[str],
             results['tda_clean_vs_adv'] = False
     
     if 'correlation_matrix' in what:
-        for name in tda_names:
-            print(f"  Generating correlation matrix for {name}...")
+        for attack in tda_attacks:
+            print(f"  Generating correlation matrix for {attack}...")
             try:
-                visualizer.create_correlation_matrix_plot(name, save=True)
-                results[f'correlation_{name}'] = True
+                visualizer.create_correlation_matrix_plot(attack, save=True)
+                results[f'correlation_{attack}'] = True
             except Exception as e:
                 print(f"    Error: {e}")
-                results[f'correlation_{name}'] = False
+                results[f'correlation_{attack}'] = False
             
     return results
 
@@ -339,11 +337,16 @@ def main():
             )
             # Check if user provided specific TDA names via --attack or --characteristics
             # For TDA mode, we can repurpose --characteristics to take a list of model names
-            tda_names = None
-            if args.characteristics and args.characteristics != 'all':
-                tda_names = [c.strip() for c in args.characteristics.split(',')]
+            tda_attacks = None
+            if args.attack:
+                if args.attack == 'all':
+                    tda_attacks = list(ATTACKS) + ['clean']
+                else:
+                    tda_attacks = [args.attack]
+            elif args.characteristics and args.characteristics != 'all':
+                tda_attacks = [c.strip() for c in args.characteristics.split(',')]
             
-            results = run_tda_visualizations(args.dataset, what_to_generate, viz, names=tda_names)
+            results = run_tda_visualizations(args.dataset, what_to_generate, viz, attacks=tda_attacks)
             all_results.update(results)
 
         # Interactive mode would be implemented here

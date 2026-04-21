@@ -215,7 +215,9 @@ class AdversarialVisualizer(BaseVisualizer):
             for idx, attack in enumerate(attacks):
                 try:
                     adv_data = load_adversarial_data(self.dataset, attack)
-                    perturbations = np.abs(adv_data - original_data[:len(adv_data)])
+                    # Limit adversarial data to match original data length
+                    min_samples = min(len(original_data), len(adv_data))
+                    perturbations = np.abs(adv_data[:min_samples] - original_data[:min_samples])
                     distances = np.linalg.norm(perturbations.reshape(perturbations.shape[0], -1), axis=1)
                     
                     ax = axes[idx]
@@ -796,19 +798,22 @@ class TDAVisualizer(BaseVisualizer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def create_persistence_diagram(self, name: str, save: bool = True) -> Optional[Figure]:
+    def _get_tda_path(self, attack: str) -> Path:
+        from visualizer.config import ANALYSIS_DIR
+        return ANALYSIS_DIR / self.dataset / f"tda_{self.dataset}_{attack}.json"
+    
+    def create_persistence_diagram(self, attack: str, save: bool = True) -> Optional[Figure]:
         """
         Plot persistence diagrams for a given TDA result
         """
         try:
             import json
 
-            # Load TDA data
-            tda_path = RESULTS_DIR / "tda" / f"tda_{self.dataset}.json"
+            tda_path = self._get_tda_path(attack)
             if not tda_path.exists():
-                # Try alternative naming
-                tda_path = RESULTS_DIR / "tda" / f"{name}_{self.dataset}.json"
-                
+                tda_path = RESULTS_DIR / "tda" / f"tda_{self.dataset}.json"
+            if not tda_path.exists():
+                tda_path = RESULTS_DIR / "tda" / f"{attack}_{self.dataset}.json"
             if not tda_path.exists():
                 print(f"TDA data not found at {tda_path}")
                 return None
@@ -827,18 +832,15 @@ class TDAVisualizer(BaseVisualizer):
                 dgm = np.array(dgm)
                 
                 if len(dgm) > 0:
-                    # Filter out infinite points for plotting
                     finite_mask = np.isfinite(dgm[:, 1])
                     finite_dgm = dgm[finite_mask]
                     
                     ax.scatter(finite_dgm[:, 0], finite_dgm[:, 1], s=25, c=f'C{dim}', 
                               alpha=0.6, label=f'H{dim}')
                     
-                    # Plot diagonal
                     max_val = np.max(finite_dgm) if len(finite_dgm) > 0 else 1.0
                     ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.4)
                     
-                    # Handle infinite points
                     inf_points = dgm[~finite_mask]
                     if len(inf_points) > 0:
                         ax.scatter(inf_points[:, 0], [max_val * 1.1] * len(inf_points), 
@@ -850,11 +852,11 @@ class TDAVisualizer(BaseVisualizer):
                 ax.legend()
                 ax.grid(True, alpha=0.3)
             
-            plt.suptitle(f'Persistence Diagrams: {name.upper()}', fontsize=16)
+            plt.suptitle(f'Persistence Diagrams: {attack.upper()}', fontsize=16)
             plt.tight_layout()
             
             if save:
-                self.save_figure(fig, f"persistence_{name}.png", "tda")
+                self.save_figure(fig, f"persistence_{attack}.png", "tda")
             
             return fig
             
@@ -862,21 +864,23 @@ class TDAVisualizer(BaseVisualizer):
             print(f"Error creating persistence diagram: {e}")
             return None
 
-    def create_feature_comparison(self, names: List[str], save: bool = True) -> Optional[Figure]:
+    def create_feature_comparison(self, attacks: List[str], save: bool = True) -> Optional[Figure]:
         """
-        Compare topological features across different models
+        Compare topological features across different attacks
         """
         try:
             import json
 
             all_features = []
-            for name in names:
-                tda_path = RESULTS_DIR / "tda" / f"{name}_{self.dataset}.json"
+            for attack in attacks:
+                tda_path = self._get_tda_path(attack)
+                if not tda_path.exists():
+                    tda_path = RESULTS_DIR / "tda" / f"{attack}_{self.dataset}.json"
                 if tda_path.exists():
                     with open(tda_path, 'r') as f:
                         data = json.load(f)
                         feat = data['features']
-                        feat['model_name'] = name
+                        feat['attack_name'] = attack
                         all_features.append(feat)
             
             if not all_features:
@@ -885,7 +889,6 @@ class TDAVisualizer(BaseVisualizer):
                 
             df = pd.DataFrame(all_features)
             
-            # Select key features to plot
             plot_features = [f for f in df.columns if 'max_persistence' in f or 'avg_death' in f]
             
             fig, axes = plt.subplots(1, len(plot_features), figsize=(5 * len(plot_features), 6))
@@ -894,7 +897,7 @@ class TDAVisualizer(BaseVisualizer):
                 
             for i, feat in enumerate(plot_features):
                 ax = axes[i]
-                sns.barplot(x='model_name', y=feat, data=df, ax=ax)
+                sns.barplot(x='attack_name', y=feat, data=df, ax=ax)
                 ax.set_title(feat.replace('_', ' ').title())
                 ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
                 ax.set_xlabel('')
@@ -919,9 +922,12 @@ class TDAVisualizer(BaseVisualizer):
         try:
             import json
 
-            # Load TDA data
-            clean_path = RESULTS_DIR / "tda" / f"clean_{self.dataset}.json"
-            adv_path = RESULTS_DIR / "tda" / f"{attack}_{self.dataset}.json"
+            clean_path = self._get_tda_path("clean")
+            adv_path = self._get_tda_path(attack)
+            if not clean_path.exists():
+                clean_path = RESULTS_DIR / "tda" / f"clean_{self.dataset}.json"
+            if not adv_path.exists():
+                adv_path = RESULTS_DIR / "tda" / f"{attack}_{self.dataset}.json"
             
             if not clean_path.exists() or not adv_path.exists():
                 print(f"TDA data not found. Clean: {clean_path.exists()}, Adv: {adv_path.exists()}")
@@ -1002,7 +1008,7 @@ class TDAVisualizer(BaseVisualizer):
                 ax.legend()
                 ax.grid(True, alpha=0.3)
             
-            plt.suptitle(f'TDA Comparison: Clean vs {attack.upper()} Adversarial (MNIST)', fontsize=16)
+            plt.suptitle(f'TDA Comparison: Clean vs {attack.upper()} Adversarial ({self.dataset.upper()})', fontsize=16)
             plt.tight_layout(rect=(0, 0.03, 1, 0.95))
             
             if save:
@@ -1016,19 +1022,18 @@ class TDAVisualizer(BaseVisualizer):
             traceback.print_exc()
             return None
 
-    def create_correlation_matrix_plot(self, name: str, save: bool = True) -> Optional[Figure]:
+    def create_correlation_matrix_plot(self, attack: str, save: bool = True) -> Optional[Figure]:
         """
         Visualize the neuron correlation matrix
         """
         try:
             import json
 
-            # Load TDA data
-            tda_path = RESULTS_DIR / "tda" / f"tda_{self.dataset}.json"
+            tda_path = self._get_tda_path(attack)
             if not tda_path.exists():
-                # Try alternative naming
-                tda_path = RESULTS_DIR / "tda" / f"{name}_{self.dataset}.json"
-                
+                tda_path = RESULTS_DIR / "tda" / f"tda_{self.dataset}.json"
+            if not tda_path.exists():
+                tda_path = RESULTS_DIR / "tda" / f"{attack}_{self.dataset}.json"
             if not tda_path.exists():
                 print(f"TDA data not found at {tda_path}")
                 return None
@@ -1046,14 +1051,14 @@ class TDAVisualizer(BaseVisualizer):
             im = ax.imshow(corr_matrix, cmap='RdBu_r', vmin=-1, vmax=1)
             plt.colorbar(im, ax=ax)
             
-            ax.set_title(f'Neuron Correlation Matrix: {name.upper()}')
+            ax.set_title(f'Neuron Correlation Matrix: {attack.upper()}')
             ax.set_xlabel('Neuron Index')
             ax.set_ylabel('Neuron Index')
             
             plt.tight_layout()
             
             if save:
-                self.save_figure(fig, f"correlation_matrix_{name}.png", "tda")
+                self.save_figure(fig, f"correlation_matrix_{attack}.png", "tda")
             
             return fig
             

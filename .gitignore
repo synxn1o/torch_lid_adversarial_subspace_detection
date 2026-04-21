@@ -7,3 +7,5 @@ pyrightconfig.json
 .pkl
 .npy
 experiments/
+stat/
+visualizer/outputs/
