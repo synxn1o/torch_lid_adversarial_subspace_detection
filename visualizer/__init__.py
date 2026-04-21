@@ -23,6 +23,7 @@ from .visualizers import (
     DetectionVisualizer,
     BaseVisualizer
 )
+from .tda_visualizers import TDAVisualizer
 from .utils import parse_arguments, setup_environment, print_banner
 
 # Main entry point
@@ -44,7 +45,7 @@ __all__ = [
     
     # Visualizers
     "BaseVisualizer", "AdversarialVisualizer",
-    "ModelVisualizer", "DetectionVisualizer",
+    "ModelVisualizer", "DetectionVisualizer", "TDAVisualizer",
     
     # Utils
     "parse_arguments", "setup_environment", "print_banner",
