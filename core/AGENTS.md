@@ -11,6 +11,7 @@ core/
 ├── data_loaders.py   # MNIST/CIFAR/SVHN/Toy loaders
 ├── detectors.py      # LID, KD, KM, TDA detectors
 ├── models.py         # CNN architectures + ModelWrapper
+├── tda_utils.py      # TDA utilities (pure numpy, no torch)
 └── utils.py          # MLE, distance metrics, noise generation
 ```
 
@@ -34,5 +35,5 @@ core/
 ## ANTI-PATTERNS
 
 - **NEVER** assume `y_target` is pre-set in attacks
-- **ALWAYS** check `ripser` import before using `TDADetector`
+- **ALWAYS** check `ripser` import before using `TDADetector` (optional dep in conda env ML)
 - **DO NOT** modify base classes without updating all subclasses

@@ -68,6 +68,13 @@ VISUALIZATION_CONFIG = {
     "batch_size": 100,     # Processing batch size
 }
 
+# Color palette presets by plot type
+PALETTES = {
+    "categorical": "colorblind",
+    "sequential": "crest",
+    "diverging": "BrBG",
+}
+
 # Plot style presets
 PLOT_STYLES = {
     "presentation": {

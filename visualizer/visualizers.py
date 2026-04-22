@@ -14,13 +14,10 @@ import pandas as pd
 from sklearn.metrics import roc_curve, auc, confusion_matrix, accuracy_score, precision_score, recall_score
 from sklearn.preprocessing import MinMaxScaler
 from mpl_toolkits.mplot3d import Axes3D
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-
 from visualizer.config import (
     get_output_path,
     PLOT_STYLES,
+    PALETTES,
     VISUALIZATION_CONFIG,
     get_dataset_config,
     RESULTS_DIR
@@ -66,6 +63,19 @@ class BaseVisualizer:
         })
         
         sns.set_palette("colorblind")
+
+    def _palette(self, kind: str = "categorical") -> str:
+        """Return palette name for a plot type ('categorical', 'sequential', 'diverging')."""
+        return PALETTES[kind]
+
+    def _apply_title(self, fig_or_ax, title: Optional[str], default: str):
+        """Apply title to a figure (suptitle) or axes (set_title)."""
+        if title is None:
+            title = default
+        if hasattr(fig_or_ax, 'suptitle'):
+            fig_or_ax.suptitle(title, fontsize=16)
+        else:
+            fig_or_ax.set_title(title)
     
     def save_figure(self, fig, filename: str, subdir: Optional[str] = None):
         """Save figure to output directory"""
@@ -108,7 +118,7 @@ class AdversarialVisualizer(BaseVisualizer):
             
             # Special handling for toy dataset (2D points)
             if self.dataset == 'toy':
-                return self._create_toy_scatter_comparison(attack, original_data, adversarial_data, original_labels, save)
+                return self._create_toy_scatter_comparison(attack, original_data, adversarial_data, original_labels, save, title)
 
             # Calculate perturbations
             perturbations = np.abs(adversarial_data - original_data)
@@ -140,7 +150,7 @@ class AdversarialVisualizer(BaseVisualizer):
                 # Perturbation (heatmap)
                 ax = axes[i, 2]
                 img = perturbations[i].squeeze()
-                im = ax.imshow(img, cmap='hot')
+                im = ax.imshow(img, cmap=self._palette("sequential"))
                 ax.set_title(f'Perturbation\n|Δ| = {np.mean(img):.3f}')
                 ax.axis('off')
                 plt.colorbar(im, ax=ax, shrink=0.6)
@@ -148,7 +158,7 @@ class AdversarialVisualizer(BaseVisualizer):
                 # Difference
                 ax = axes[i, 3]
                 img = differences[i].squeeze()
-                im = ax.imshow(img, cmap='RdBu_r', vmin=-0.5, vmax=0.5)
+                im = ax.imshow(img, cmap=self._palette("diverging"), vmin=-0.5, vmax=0.5)
                 ax.set_title(f'Difference\n±{np.max(np.abs(img)):.3f}')
                 ax.axis('off')
                 plt.colorbar(im, ax=ax, shrink=0.6)
@@ -172,29 +182,33 @@ class AdversarialVisualizer(BaseVisualizer):
     def _create_toy_scatter_comparison(self, attack, original, adversarial, labels, save, title: Optional[str] = None):
         """Create scatter plot comparison for 2D toy data"""
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        
+
+        palette = self._palette("diverging")
+
         # Original
-        axes[0].scatter(original[:, 0], original[:, 1], c=labels, cmap='coolwarm', alpha=0.6)
+        sns.scatterplot(x=original[:, 0], y=original[:, 1], hue=labels,
+                        palette=palette, alpha=0.6, ax=axes[0], legend=False)
         axes[0].set_title('Original Data')
         axes[0].grid(True, alpha=0.3)
-        
+
         # Adversarial
-        axes[1].scatter(adversarial[:, 0], adversarial[:, 1], c=labels, cmap='coolwarm', alpha=0.6)
+        sns.scatterplot(x=adversarial[:, 0], y=adversarial[:, 1], hue=labels,
+                        palette=palette, alpha=0.6, ax=axes[1], legend=False)
         # Draw arrows from original to adversarial
         for i in range(min(50, len(original))):
-            axes[1].arrow(original[i, 0], original[i, 1], 
-                         adversarial[i, 0] - original[i, 0], 
+            axes[1].arrow(original[i, 0], original[i, 1],
+                         adversarial[i, 0] - original[i, 0],
                          adversarial[i, 1] - original[i, 1],
                          head_width=0.05, head_length=0.1, fc='k', ec='k', alpha=0.3)
-        
+
         axes[1].set_title(f'Adversarial Data ({attack})')
         axes[1].grid(True, alpha=0.3)
-        
+
         if title is None:
             title = f'Toy Dataset: {attack.upper()} Attack Visualization'
         plt.suptitle(title, fontsize=16)
         plt.tight_layout()
-        
+
         if save:
             self.save_figure(fig, f"adversarial_scatter_{attack}.png", "adversarial")
         return fig
@@ -214,7 +228,9 @@ class AdversarialVisualizer(BaseVisualizer):
             
             fig, axes = plt.subplots(2, 2, figsize=(14, 10))
             axes = axes.flatten()
-            
+
+            palette_colors = sns.color_palette(self._palette("sequential"), n_colors=len(attacks))
+
             for idx, attack in enumerate(attacks):
                 try:
                     adv_data = load_adversarial_data(self.dataset, attack)
@@ -222,9 +238,10 @@ class AdversarialVisualizer(BaseVisualizer):
                     min_samples = min(len(original_data), len(adv_data))
                     perturbations = np.abs(adv_data[:min_samples] - original_data[:min_samples])
                     distances = np.linalg.norm(perturbations.reshape(perturbations.shape[0], -1), axis=1)
-                    
+
                     ax = axes[idx]
-                    ax.hist(distances, bins=30, alpha=0.7, color=f'C{idx}', edgecolor='black')
+                    sns.histplot(distances, bins=30, alpha=0.7, color=palette_colors[idx],
+                                edgecolor='black', ax=ax)
                     ax.axvline(np.mean(distances), color='red', linestyle='--', linewidth=2,
                               label=f'Mean: {np.mean(distances):.3f}')
                     ax.axvline(np.median(distances), color='blue', linestyle='--', linewidth=2,
@@ -293,39 +310,35 @@ class AdversarialVisualizer(BaseVisualizer):
                 return None
             
             fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-            
+
             # Success rates
             attacks_list = list(all_metrics.keys())
             success_rates = [all_metrics[a]["success_rate"] for a in attacks_list]
-            
-            bars = axes[0].bar(range(len(attacks_list)), success_rates, 
-                             color=['red', 'blue', 'green', 'orange'][:len(attacks_list)])
-            axes[0].set_xticks(range(len(attacks_list)))
+
+            sns.barplot(x=attacks_list, y=success_rates,
+                        palette=self._palette("categorical"), ax=axes[0])
             axes[0].set_xticklabels(attacks_list, rotation=45)
             axes[0].set_ylabel('Success Rate')
             axes[0].set_title('Attack Success Rates')
             axes[0].set_ylim(0, 1)
             axes[0].grid(True, alpha=0.3, axis='y')
-            
-            for i, (bar, rate) in enumerate(zip(bars, success_rates)):
-                axes[0].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                           f'{rate:.1%}', ha='center', va='bottom')
-            
+
+            for i, rate in enumerate(success_rates):
+                axes[0].text(i, rate + 0.01, f'{rate:.1%}', ha='center', va='bottom')
+
             # Confidence drops
             confidence_drops = [all_metrics[a]["confidence_drop"] for a in attacks_list]
-            bars = axes[1].bar(range(len(attacks_list)), confidence_drops,
-                             color=['purple', 'cyan', 'magenta', 'yellow'][:len(attacks_list)])
-            axes[1].set_xticks(range(len(attacks_list)))
+            sns.barplot(x=attacks_list, y=confidence_drops,
+                        palette=self._palette("categorical"), ax=axes[1])
             axes[1].set_xticklabels(attacks_list, rotation=45)
             axes[1].set_ylabel('Confidence Drop')
             axes[1].set_title('Model Confidence Reduction')
             axes[1].grid(True, alpha=0.3, axis='y')
-            
+
             # Mean confidence
             mean_conf = [all_metrics[a]["mean_confidence"] for a in attacks_list]
-            bars = axes[2].bar(range(len(attacks_list)), mean_conf,
-                             color=['orange', 'teal', 'olive', 'pink'][:len(attacks_list)])
-            axes[2].set_xticks(range(len(attacks_list)))
+            sns.barplot(x=attacks_list, y=mean_conf,
+                        palette=self._palette("categorical"), ax=axes[2])
             axes[2].set_xticklabels(attacks_list, rotation=45)
             axes[2].set_ylabel('Mean Confidence')
             axes[2].set_title('Adversarial Prediction Confidence')
@@ -360,30 +373,36 @@ class ModelVisualizer(BaseVisualizer):
             metrics = load_training_metrics(self.dataset)
             
             fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-            
+
+            palette = self._palette("sequential")
+
             # Loss curves
-            axes[0].plot(metrics["epochs"], metrics["train_loss"], 
-                       'b-', linewidth=2, label='Training Loss')
+            sns.lineplot(x=metrics["epochs"], y=metrics["train_loss"],
+                         color=sns.color_palette(palette, 3)[0],
+                         linewidth=2, label='Training Loss', ax=axes[0])
             axes[0].set_xlabel('Epoch')
             axes[0].set_ylabel('Loss')
             axes[0].set_title('Training Loss Curve')
             axes[0].legend()
             axes[0].grid(True, alpha=0.3)
-            
+
             # Accuracy curves
-            axes[1].plot(metrics["epochs"], metrics["train_acc"], 
-                       'g-', linewidth=2, label='Training Accuracy')
-            axes[1].plot(metrics["epochs"], metrics["val_acc"], 
-                       'r--', linewidth=2, label='Validation Accuracy')
+            colors = sns.color_palette(palette, 3)
+            sns.lineplot(x=metrics["epochs"], y=metrics["train_acc"],
+                         color=colors[0], linewidth=2, label='Training Accuracy', ax=axes[1])
+            sns.lineplot(x=metrics["epochs"], y=metrics["val_acc"],
+                         color=colors[1], linewidth=2, linestyle='--',
+                         label='Validation Accuracy', ax=axes[1])
             axes[1].set_xlabel('Epoch')
             axes[1].set_ylabel('Accuracy (%)')
             axes[1].set_title('Accuracy Evolution')
             axes[1].legend()
             axes[1].grid(True, alpha=0.3)
-            
+
             # Final performance summary
             test_acc = metrics["test_accuracy"]
-            axes[2].bar(['Test Accuracy'], [test_acc * 100], color='purple', alpha=0.7)
+            sns.barplot(x=['Test Accuracy'], y=[test_acc * 100],
+                        palette=self._palette("categorical"), ax=axes[2])
             axes[2].set_ylabel('Accuracy (%)')
             axes[2].set_title(f'Model Performance\nTest Accuracy: {test_acc:.2%}')
             axes[2].set_ylim(0, 100)
@@ -418,7 +437,7 @@ class ModelVisualizer(BaseVisualizer):
             
             # Create heatmap
             labels = [str(i) for i in range(cm.shape[0])]
-            sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues',
+            sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap=self._palette("sequential"),
                        xticklabels=labels, yticklabels=labels, ax=ax)
             
             ax.set_xlabel('Predicted Label')
@@ -438,32 +457,34 @@ class ModelVisualizer(BaseVisualizer):
             print(f"Error creating confusion matrix: {e}")
             return None
     
-    def create_roc_analysis(self, save: bool = True) -> Optional[Figure]:
+    def create_roc_analysis(self, save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Create ROC curves for multi-class classification
         """
         try:
             metrics = load_training_metrics(self.dataset)
-            
+
             fig, ax = plt.subplots(figsize=(10, 8))
-            
+
             # Plot ROC for first 3 classes
-            colors = ['blue', 'red', 'green']
-            for i, (class_idx, color) in enumerate(zip([0, 1, 2], colors)):
+            colors = sns.color_palette(self._palette("categorical"), 3)
+            for i, class_idx in enumerate([0, 1, 2]):
                 if class_idx in metrics["fpr"]:
                     fpr = metrics["fpr"][class_idx]
                     tpr = metrics["tpr"][class_idx]
                     roc_auc = metrics["roc_auc"][class_idx]
-                    
-                    ax.plot(fpr, tpr, color=color, lw=2,
-                           label=f'Class {class_idx} (AUC = {roc_auc:.3f})')
-            
+
+                    sns.lineplot(x=fpr, y=tpr, color=colors[i], linewidth=2,
+                                 label=f'Class {class_idx} (AUC = {roc_auc:.3f})', ax=ax)
+
             ax.plot([0, 1], [0, 1], color='gray', lw=2, linestyle='--')
             ax.set_xlim(0.0, 1.0)
             ax.set_ylim(0.0, 1.05)
             ax.set_xlabel('False Positive Rate')
             ax.set_ylabel('True Positive Rate')
-            ax.set_title('ROC Curves (First 3 Classes)')
+            if title is None:
+                title = 'ROC Curves (First 3 Classes)'
+            ax.set_title(title)
             ax.legend(loc="lower right")
             ax.grid(True, alpha=0.3)
             
@@ -513,35 +534,35 @@ class DetectionVisualizer(BaseVisualizer):
                     continue
                 
                 ax = axes[idx]
-                colors = ['blue', 'red', 'green', 'orange']
-                
+                colors = sns.color_palette(self._palette("categorical"), len(characteristics))
+
                 for char_idx, characteristic in enumerate(characteristics):
                     if characteristic not in all_data[attack]:
                         continue
-                    
+
                     X, y = all_data[attack][characteristic]
-                    
+
                     # Train simple detector
                     from sklearn.linear_model import LogisticRegression
                     from sklearn.model_selection import train_test_split
-                    
+
                     X_train, X_test, y_train, y_test = train_test_split(
                         X, y, test_size=0.2, random_state=42, stratify=y
                     )
-                    
+
                     scaler = MinMaxScaler()
                     X_train_scaled = scaler.fit_transform(X_train)
                     X_test_scaled = scaler.transform(X_test)
-                    
+
                     lr = LogisticRegression(max_iter=1000)
                     lr.fit(X_train_scaled, y_train)
-                    
+
                     y_probs = lr.predict_proba(X_test_scaled)[:, 1]
                     fpr, tpr, _ = roc_curve(y_test, y_probs)
                     roc_auc = auc(fpr, tpr)
-                    
-                    ax.plot(fpr, tpr, color=colors[char_idx % len(colors)], lw=2,
-                           label=f'{characteristic.upper()} (AUC = {roc_auc:.3f})')
+
+                    sns.lineplot(x=fpr, y=tpr, color=colors[char_idx], linewidth=2,
+                                 label=f'{characteristic.upper()} (AUC = {roc_auc:.3f})', ax=ax)
                 
                 ax.plot([0, 1], [0, 1], color='gray', lw=2, linestyle='--')
                 ax.set_xlim([0.0, 1.0])
@@ -570,45 +591,49 @@ class DetectionVisualizer(BaseVisualizer):
             print(f"Error creating ROC comparison: {e}")
             return None
     
-    def create_3d_feature_space(self, attack: str = "fgsm", 
+    def create_3d_feature_space(self, attack: str = "fgsm",
                               characteristic: str = "lid",
-                              save: bool = True) -> Optional[Figure]:
+                              save: bool = True,
+                              title: Optional[str] = None) -> Optional[Figure]:
         """
         Create 3D scatter plot of feature space
         """
         try:
             X, y = load_characteristics_data(self.dataset, characteristic, attack)
-            
+
             if X.shape[1] < 3:
                 print(f"Not enough features for 3D plot (only {X.shape[1]} available)")
                 return None
-            
+
             # Sample to avoid overcrowding
             max_points = 500
             if len(X) > max_points:
                 indices = np.random.choice(len(X), max_points, replace=False)
                 X = X[indices]
                 y = y[indices]
-            
+
             fig = plt.figure(figsize=(12, 9))
             ax = fig.add_subplot(111, projection='3d')
-            
+
             # Separate clean and adversarial
             clean_mask = y == 0
             adv_mask = y == 1
-            
+            cat_colors = sns.color_palette(self._palette("categorical"), 2)
+
             if np.any(clean_mask):
                 ax.scatter(X[clean_mask, 0], X[clean_mask, 1], X[clean_mask, 2],
-                          c='blue', label='Normal', alpha=0.6, s=20)
-            
+                          c=[cat_colors[0]], label='Normal', alpha=0.6, s=20)
+
             if np.any(adv_mask):
                 ax.scatter(X[adv_mask, 0], X[adv_mask, 1], X[adv_mask, 2],
-                          c='red', label='Adversarial', alpha=0.6, s=20)
-            
+                          c=[cat_colors[1]], label='Adversarial', alpha=0.6, s=20)
+
             ax.set_xlabel(f'{characteristic.upper()} Feature 1')
             ax.set_ylabel(f'{characteristic.upper()} Feature 2')
             ax.set_zlabel(f'{characteristic.upper()} Feature 3')
-            ax.set_title(f'3D Feature Space: {characteristic.upper()} on {attack.upper()}')
+            if title is None:
+                title = f'3D Feature Space: {characteristic.upper()} on {attack.upper()}'
+            ax.set_title(title)
             ax.legend()
             ax.grid(True, alpha=0.3)
             
@@ -681,13 +706,16 @@ class DetectionVisualizer(BaseVisualizer):
                     # Plot distributions
                     clean_probs = y_probs[y_test == 0]
                     adv_probs = y_probs[y_test == 1]
-                    
+                    dist_colors = sns.color_palette(self._palette("sequential"), 2)
+
                     if len(clean_probs) > 0:
-                        axes[i, j].hist(clean_probs, bins=30, alpha=0.6, 
-                                       label='Normal', color='green', density=True)
+                        sns.histplot(clean_probs, bins=30, alpha=0.6,
+                                     label='Normal', color=dist_colors[0],
+                                     stat='density', ax=axes[i, j])
                     if len(adv_probs) > 0:
-                        axes[i, j].hist(adv_probs, bins=30, alpha=0.6,
-                                       label='Adversarial', color='red', density=True)
+                        sns.histplot(adv_probs, bins=30, alpha=0.6,
+                                     label='Adversarial', color=dist_colors[1],
+                                     stat='density', ax=axes[i, j])
                     
                     axes[i, j].set_title(f'{attack.upper()} - {char.upper()}')
                     axes[i, j].set_xlabel('Detection Probability')
@@ -780,10 +808,8 @@ class DetectionVisualizer(BaseVisualizer):
             for idx, (metric, subplot_title) in enumerate(zip(metrics_to_plot, titles)):
                 ax = axes[idx // 2, idx % 2]
 
-                # Create pivot table for grouped bar chart
-                pivot = df.pivot(index='attack', columns='characteristic', values=metric)
-
-                pivot.plot(kind='bar', ax=ax, width=0.8, alpha=0.8)
+                sns.barplot(data=df, x='attack', y=metric, hue='characteristic',
+                            palette=self._palette("categorical"), ax=ax)
 
                 ax.set_title(subplot_title)
                 ax.set_ylabel(metric.replace('_', ' ').title())
