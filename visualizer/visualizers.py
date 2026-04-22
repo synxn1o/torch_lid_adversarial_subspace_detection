@@ -83,8 +83,8 @@ class AdversarialVisualizer(BaseVisualizer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def create_image_grid_comparison(self, attack: str, num_samples: int = 16, 
-                                   save: bool = True) -> Optional[Figure]:
+    def create_image_grid_comparison(self, attack: str, num_samples: int = 16,
+                                   save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Create grid comparison: Original vs Adversarial vs Perturbation vs Difference
         """
@@ -153,8 +153,9 @@ class AdversarialVisualizer(BaseVisualizer):
                 ax.axis('off')
                 plt.colorbar(im, ax=ax, shrink=0.6)
             
-            plt.suptitle(f'{self.dataset.upper()}: Original vs {attack.upper()} Adversarial Examples', 
-                        fontsize=16, y=1.02)
+            if title is None:
+                title = f'{self.dataset.upper()}: Original vs {attack.upper()} Adversarial Examples'
+            plt.suptitle(title, fontsize=16, y=1.02)
             plt.tight_layout()
             
             if save:
@@ -168,7 +169,7 @@ class AdversarialVisualizer(BaseVisualizer):
             traceback.print_exc()
             return None
 
-    def _create_toy_scatter_comparison(self, attack, original, adversarial, labels, save):
+    def _create_toy_scatter_comparison(self, attack, original, adversarial, labels, save, title: Optional[str] = None):
         """Create scatter plot comparison for 2D toy data"""
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         
@@ -189,15 +190,17 @@ class AdversarialVisualizer(BaseVisualizer):
         axes[1].set_title(f'Adversarial Data ({attack})')
         axes[1].grid(True, alpha=0.3)
         
-        plt.suptitle(f'Toy Dataset: {attack.upper()} Attack Visualization', fontsize=16)
+        if title is None:
+            title = f'Toy Dataset: {attack.upper()} Attack Visualization'
+        plt.suptitle(title, fontsize=16)
         plt.tight_layout()
         
         if save:
             self.save_figure(fig, f"adversarial_scatter_{attack}.png", "adversarial")
         return fig
     
-    def create_perturbation_analysis(self, attacks: Optional[List[str]] = None, 
-                                   save: bool = True) -> Optional[Figure]:
+    def create_perturbation_analysis(self, attacks: Optional[List[str]] = None,
+                                   save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Analyze perturbation magnitudes across attacks
         """
@@ -238,7 +241,9 @@ class AdversarialVisualizer(BaseVisualizer):
                     axes[idx].set_xticks([])
                     axes[idx].set_yticks([])
             
-            plt.suptitle('Perturbation Magnitude Analysis Across Attacks', fontsize=16)
+            if title is None:
+                title = 'Perturbation Magnitude Analysis Across Attacks'
+            plt.suptitle(title, fontsize=16)
             plt.tight_layout()
             
             if save:
@@ -250,8 +255,8 @@ class AdversarialVisualizer(BaseVisualizer):
             print(f"Error creating perturbation analysis: {e}")
             return None
     
-    def create_attack_success_metrics(self, attacks: Optional[List[str]] = None, 
-                                    save: bool = True) -> Optional[Figure]:
+    def create_attack_success_metrics(self, attacks: Optional[List[str]] = None,
+                                    save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Analyze attack success rates and metrics
         """
@@ -326,7 +331,9 @@ class AdversarialVisualizer(BaseVisualizer):
             axes[2].set_title('Adversarial Prediction Confidence')
             axes[2].grid(True, alpha=0.3, axis='y')
             
-            plt.suptitle('Attack Success and Confidence Analysis', fontsize=16)
+            if title is None:
+                title = 'Attack Success and Confidence Analysis'
+            plt.suptitle(title, fontsize=16)
             plt.tight_layout()
             
             if save:
@@ -345,7 +352,7 @@ class ModelVisualizer(BaseVisualizer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def create_training_curves(self, save: bool = True) -> Optional[Figure]:
+    def create_training_curves(self, save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Create training/validation loss and accuracy curves
         """
@@ -382,7 +389,9 @@ class ModelVisualizer(BaseVisualizer):
             axes[2].set_ylim(0, 100)
             axes[2].grid(True, alpha=0.3, axis='y')
             
-            plt.suptitle(f'{self.dataset.upper()} Model Training Analysis', fontsize=16)
+            if title is None:
+                title = f'{self.dataset.upper()} Model Training Analysis'
+            plt.suptitle(title, fontsize=16)
             plt.tight_layout()
             
             if save:
@@ -394,7 +403,7 @@ class ModelVisualizer(BaseVisualizer):
             print(f"Error creating training curves: {e}")
             return None
     
-    def create_confusion_matrix(self, save: bool = True) -> Optional[Figure]:
+    def create_confusion_matrix(self, save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Create confusion matrix visualization
         """
@@ -414,7 +423,9 @@ class ModelVisualizer(BaseVisualizer):
             
             ax.set_xlabel('Predicted Label')
             ax.set_ylabel('True Label')
-            ax.set_title(f'Confusion Matrix\nOverall Accuracy: {metrics["test_accuracy"]:.2%}')
+            if title is None:
+                title = f'Confusion Matrix\nOverall Accuracy: {metrics["test_accuracy"]:.2%}'
+            ax.set_title(title)
             
             plt.tight_layout()
             
@@ -474,9 +485,9 @@ class DetectionVisualizer(BaseVisualizer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def create_roc_comparison(self, attacks: Optional[List[str]] = None, 
+    def create_roc_comparison(self, attacks: Optional[List[str]] = None,
                             characteristics: Optional[List[str]] = None,
-                            save: bool = True) -> Optional[Figure]:
+                            save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Compare ROC curves across characteristics and attacks
         """
@@ -545,7 +556,9 @@ class DetectionVisualizer(BaseVisualizer):
             for i in range(num_attacks, 4):
                 axes[i].set_visible(False)
             
-            plt.suptitle('Adversarial Detector ROC Curves Comparison', fontsize=16, y=1.02)
+            if title is None:
+                title = 'Adversarial Detector ROC Curves Comparison'
+            plt.suptitle(title, fontsize=16, y=1.02)
             plt.tight_layout()
             
             if save:
@@ -612,7 +625,7 @@ class DetectionVisualizer(BaseVisualizer):
     
     def create_probability_distributions(self, attacks: Optional[List[str]] = None,
                                        characteristics: Optional[List[str]] = None,
-                                       save: bool = True) -> Optional[Figure]:
+                                       save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Create probability distribution histograms for detection outputs
         """
@@ -682,7 +695,9 @@ class DetectionVisualizer(BaseVisualizer):
                     axes[i, j].legend()
                     axes[i, j].grid(True, alpha=0.3)
             
-            plt.suptitle('Detection Probability Distributions', fontsize=16, y=1.00)
+            if title is None:
+                title = 'Detection Probability Distributions'
+            plt.suptitle(title, fontsize=16, y=1.00)
             plt.tight_layout()
             
             if save:
@@ -696,7 +711,7 @@ class DetectionVisualizer(BaseVisualizer):
     
     def create_metrics_comparison(self, attacks: Optional[List[str]] = None,
                                  characteristics: Optional[List[str]] = None,
-                                 save: bool = True) -> Optional[Figure]:
+                                 save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Create comprehensive metrics comparison bar charts
         """
@@ -762,15 +777,15 @@ class DetectionVisualizer(BaseVisualizer):
             metrics_to_plot = ['accuracy', 'precision', 'recall', 'auc']
             titles = ['Accuracy', 'Precision', 'Recall', 'ROC-AUC']
             
-            for idx, (metric, title) in enumerate(zip(metrics_to_plot, titles)):
+            for idx, (metric, subplot_title) in enumerate(zip(metrics_to_plot, titles)):
                 ax = axes[idx // 2, idx % 2]
-                
+
                 # Create pivot table for grouped bar chart
                 pivot = df.pivot(index='attack', columns='characteristic', values=metric)
-                
+
                 pivot.plot(kind='bar', ax=ax, width=0.8, alpha=0.8)
-                
-                ax.set_title(title)
+
+                ax.set_title(subplot_title)
                 ax.set_ylabel(metric.replace('_', ' ').title())
                 ax.set_xlabel('Attack')
                 ax.legend(title='Characteristic', bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -778,8 +793,9 @@ class DetectionVisualizer(BaseVisualizer):
                 ax.tick_params(axis='x', rotation=45)
                 ax.set_ylim(0, 1.05)
             
-            plt.suptitle('Detection Metrics Comparison Across Attacks and Characteristics', 
-                        fontsize=16, y=1.00)
+            if title is None:
+                title = 'Detection Metrics Comparison Across Attacks and Characteristics'
+            plt.suptitle(title, fontsize=16, y=1.00)
             plt.tight_layout()
             
             if save:
@@ -802,7 +818,7 @@ class TDAVisualizer(BaseVisualizer):
         from visualizer.config import ANALYSIS_DIR
         return ANALYSIS_DIR / self.dataset / f"tda_{self.dataset}_{attack}.json"
     
-    def create_persistence_diagram(self, attack: str, save: bool = True) -> Optional[Figure]:
+    def create_persistence_diagram(self, attack: str, save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Plot persistence diagrams for a given TDA result
         """
@@ -852,7 +868,9 @@ class TDAVisualizer(BaseVisualizer):
                 ax.legend()
                 ax.grid(True, alpha=0.3)
             
-            plt.suptitle(f'Persistence Diagrams: {attack.upper()}', fontsize=16)
+            if title is None:
+                title = f'Persistence Diagrams: {attack.upper()}'
+            plt.suptitle(title, fontsize=16)
             plt.tight_layout()
             
             if save:
@@ -864,7 +882,7 @@ class TDAVisualizer(BaseVisualizer):
             print(f"Error creating persistence diagram: {e}")
             return None
 
-    def create_feature_comparison(self, attacks: List[str], save: bool = True) -> Optional[Figure]:
+    def create_feature_comparison(self, attacks: List[str], save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Compare topological features across different attacks
         """
@@ -903,7 +921,9 @@ class TDAVisualizer(BaseVisualizer):
                 ax.set_xlabel('')
                 ax.grid(True, alpha=0.3, axis='y')
             
-            plt.suptitle('Topological Feature Comparison', fontsize=16)
+            if title is None:
+                title = 'Topological Feature Comparison'
+            plt.suptitle(title, fontsize=16)
             plt.tight_layout()
             
             if save:
@@ -915,7 +935,7 @@ class TDAVisualizer(BaseVisualizer):
             print(f"Error creating TDA feature comparison: {e}")
             return None
 
-    def create_clean_vs_adversarial_comparison(self, attack: str, save: bool = True) -> Optional[Figure]:
+    def create_clean_vs_adversarial_comparison(self, attack: str, save: bool = True, title: Optional[str] = None) -> Optional[Figure]:
         """
         Create a side-by-side comparison of clean vs adversarial TDA results
         """
@@ -1008,7 +1028,9 @@ class TDAVisualizer(BaseVisualizer):
                 ax.legend()
                 ax.grid(True, alpha=0.3)
             
-            plt.suptitle(f'TDA Comparison: Clean vs {attack.upper()} Adversarial ({self.dataset.upper()})', fontsize=16)
+            if title is None:
+                title = f'TDA Comparison: Clean vs {attack.upper()} Adversarial ({self.dataset.upper()})'
+            plt.suptitle(title, fontsize=16)
             plt.tight_layout(rect=(0, 0.03, 1, 0.95))
             
             if save:
